@@ -70,18 +70,17 @@ Future<void> printDoc(String name, String title, List<List<String>> rows,
 Future<String> backupFile() async {
   final n = today();
   final name = 'aqsat-backup-${n.year}${n.month.toString().padLeft(2, '0')}${n.day.toString().padLeft(2, '0')}.json';
-  final p = await FilePicker.platform.saveFile(
+  final p = await FilePicker.saveFile(
       dialogTitle: 'حفظ النسخة الاحتياطية', fileName: name, bytes: Uint8List.fromList(utf8.encode(db.export())));
   return p == null ? 'لم يتم الحفظ' : 'تم حفظ النسخة الاحتياطية';
 }
 
 /// استعادة البيانات من ملف نسخة احتياطية على الجهاز.
 Future<String> restoreFile() async {
-  final r = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
-  final b = r?.files.single.bytes;
-  if (b == null) return 'لم يتم اختيار ملف';
+  final f = await FilePicker.pickFile();
+  if (f == null) return 'لم يتم اختيار ملف';
   try {
-    db.restore(utf8.decode(b));
+    db.restore(utf8.decode(await f.readAsBytes()));
     return 'تمت استعادة البيانات';
   } catch (_) {
     return 'الملف ليس نسخة احتياطية صالحة';
