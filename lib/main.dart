@@ -360,7 +360,7 @@ class ContractDetail extends StatelessWidget {
                 ['التاريخ', dstr(k.date)], ['العميل', cu.name], ['هاتف العميل', cu.phone], ['السلعة', k.item],
                 ['السعر الإجمالي', money(k.price)], ['الدفعة المقدمة', money(k.down)], ['نسبة الربح', '${nf(k.markup)}٪'],
                 ['عدد الأقساط', '${k.insts.length}'],
-              ], head: ['#', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true),
+              ], head: ['م', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true),
           const SizedBox(height: 10),
           btn('سداد مبكر / جدولة', nx == null ? null : () => go(c, Settlement(k.id)), dark: true),
           const SizedBox(height: 16),
@@ -598,7 +598,7 @@ class Receipt extends StatelessWidget {
             for (var n = 0; n < rows.length; n++) kv(rows[n][0], rows[n][1], first: n == 0),
           ]), pad: 20),
           two(btn('واتساب', () => openWa(cu.phone, 'إيصال ${i.rcpt}: تم استلام ${money(tot)} من ${cu.name} للعقد #${k.id}. المتبقي ${money(i.left)}.'), outline: true),
-              btn('طباعة PDF', () => printDoc('receipt-${i.rcpt}.pdf', 'إيصال استلام', [['المبلغ', money(tot)], ...rows]), outline: true)),
+              btn('طباعة PDF', () => printDoc('receipt-${i.rcpt}.pdf', 'إيصال استلام', [['رقم الإيصال', i.rcpt ?? '-'], ['العميل', cu.name], ['رقم العقد', k.id], ['القسط', '${idx + 1} من ${k.insts.length}'], ['التاريخ', dstr(i.paid!)], ['طريقة الدفع', i.method ?? '-'], if (i.fee > 0) ['غرامة التأخير', money(i.fee)], ['المتبقي بعد الدفعة', money(i.left)]], big: ['المبلغ المستلم', money(tot)]), outline: true)),
           btn('تم', () => Navigator.pop(c), dark: true),
         ]);
       });

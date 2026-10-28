@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -32,34 +33,62 @@ Future<void> callPhone(String phone) async {
 }
 
 /// يطبع/يشارك مستند PDF عربي (عقد أو إيصال).
+/// ملاحظة: الجداول في مكتبة pdf لا تنعكس تلقائيًا في العربية، لذلك تُعكس الأعمدة يدويًا.
 Future<void> printDoc(String name, String title, List<List<String>> rows,
-    {List<String>? head, List<List<String>>? table, bool sign = false}) async {
+    {List<String>? head, List<List<String>>? table, bool sign = false, List<String>? big}) async {
   final doc = pw.Document(
-      theme: pw.ThemeData.withFont(
-          base: await PdfGoogleFonts.notoSansArabicRegular(),
-          bold: await PdfGoogleFonts.notoSansArabicBold()));
+      theme: pw.ThemeData.withFont(base: await PdfGoogleFonts.cairoRegular(), bold: await PdfGoogleFonts.cairoBold()));
+  const grey = PdfColor.fromInt(0xFFF1F3F0), bord = PdfColor.fromInt(0xFFCCD2CC), green = PdfColor.fromInt(0xFF0F6B4F);
+  pw.Widget cell(String t, {bool bold = false, PdfColor? bg}) => pw.Container(
+      color: bg,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      child: pw.Text(t, textAlign: pw.TextAlign.right, style: pw.TextStyle(fontSize: 12, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)));
+  pw.Widget sig(String l) => pw.Column(children: [pw.Container(width: 150, height: 1, color: PdfColors.black), pw.SizedBox(height: 5), pw.Text(l, style: const pw.TextStyle(fontSize: 11))]);
   doc.addPage(pw.MultiPage(
     textDirection: pw.TextDirection.rtl,
     margin: const pw.EdgeInsets.all(36),
     build: (_) => [
-      pw.Center(child: pw.Text(db.gs('company'), style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold))),
-      pw.SizedBox(height: 6),
-      pw.Center(child: pw.Text(title, style: const pw.TextStyle(fontSize: 15))),
-      pw.SizedBox(height: 18),
-      for (final r in rows)
-        pw.Padding(
-            padding: const pw.EdgeInsets.symmetric(vertical: 3),
-            child: pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text(r[0]), pw.Text(r[1])])),
+      pw.Center(child: pw.Text(db.gs('company'), style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: green))),
+      pw.SizedBox(height: 4),
+      pw.Center(child: pw.Text(title, style: const pw.TextStyle(fontSize: 14, color: PdfColors.grey700))),
+      pw.SizedBox(height: 10),
+      pw.Divider(color: green, thickness: 1.5),
+      pw.SizedBox(height: 10),
+      if (big != null)
+        pw.Container(
+          width: double.infinity,
+          margin: const pw.EdgeInsets.only(bottom: 14),
+          padding: const pw.EdgeInsets.all(14),
+          decoration: pw.BoxDecoration(color: grey, border: pw.Border.all(color: bord), borderRadius: pw.BorderRadius.circular(8)),
+          child: pw.Column(children: [
+            pw.Text(big[0], style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+            pw.SizedBox(height: 4),
+            pw.Text(big[1], style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold, color: green)),
+          ]),
+        ),
+      // عمود القيمة أولًا ثم العنوان ليظهر العنوان على اليمين
+      pw.Table(
+        border: pw.TableBorder.all(color: bord),
+        columnWidths: {0: const pw.FlexColumnWidth(), 1: const pw.FixedColumnWidth(130)},
+        children: [for (final r in rows) pw.TableRow(children: [cell(r[1]), cell(r[0], bold: true, bg: grey)])],
+      ),
       if (table != null) ...[
-        pw.SizedBox(height: 14),
-        pw.TableHelper.fromTextArray(headers: head, data: table),
+        pw.SizedBox(height: 18),
+        pw.TableHelper.fromTextArray(
+          headers: head!.reversed.toList(),
+          data: [for (final r in table) r.reversed.toList()],
+          border: pw.TableBorder.all(color: bord),
+          headerStyle: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          headerDecoration: const pw.BoxDecoration(color: grey),
+          cellStyle: const pw.TextStyle(fontSize: 11),
+          cellAlignment: pw.Alignment.center,
+          headerAlignment: pw.Alignment.center,
+          columnWidths: {0: const pw.FlexColumnWidth(2), 1: const pw.FlexColumnWidth(3), 2: const pw.FlexColumnWidth(3), 3: const pw.FixedColumnWidth(36)},
+        ),
       ],
       if (sign) ...[
-        pw.SizedBox(height: 50),
-        pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-          pw.Text('توقيع البائع: ________'),
-          pw.Text('توقيع العميل: ________'),
-        ]),
+        pw.SizedBox(height: 70),
+        pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [sig('توقيع البائع'), sig('توقيع العميل')]),
       ],
     ],
   ));
