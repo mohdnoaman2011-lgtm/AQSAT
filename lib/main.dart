@@ -203,7 +203,7 @@ Future<String?> pickMethod(BuildContext c, double amt, double fee) => showModalB
     builder: (d) => SafeArea(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
           Padding(padding: const EdgeInsets.all(16), child: Text('المبلغ: ${money(amt)}${fee > 0 ? ' (شامل غرامة ${money(fee)})' : ''}', style: bd)),
-          for (final m in ['نقدًا', 'تحويل بنكي', 'تطبيق بنكي']) ListTile(title: Text(m), onTap: () => Navigator.pop(d, m)),
+          for (final m in ['نقدًا', 'تحويل بنكي']) ListTile(title: Text(m), onTap: () => Navigator.pop(d, m)),
         ])));
 
 List<Contract> consOf(Cust c) => db.cons.where((k) => k.cid == c.id).toList();
@@ -357,7 +357,7 @@ class ContractDetail extends StatelessWidget {
           btn('طباعة العقد PDF', () => printDoc('contract-${k.id}.pdf', 'عقد بيع بالأقساط رقم ${k.id}', [
                 ['التاريخ', dstr(k.date)], ['العميل', cu.name], ['هاتف العميل', cu.phone], ['السلعة', k.item],
                 ['السعر الإجمالي', money(k.price)], ['الدفعة المقدمة', money(k.down)], ['نسبة الربح', '${nf(k.markup)}٪'],
-                ['عدد الأقساط', '${k.insts.length}'], ['الضامن', k.gName], ['هاتف الضامن', k.gPhone],
+                ['عدد الأقساط', '${k.insts.length}'],
               ], head: ['#', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true),
           const SizedBox(height: 10),
           btn('سداد مبكر / جدولة', nx == null ? null : () => go(c, Settlement(k.id)), dark: true),
@@ -381,7 +381,7 @@ class NewContract extends StatefulWidget {
 
 class _NcS extends State<NewContract> {
   static const ns = [6, 10, 12, 24];
-  late final name = TextEditingController(), phone = TextEditingController(), item = TextEditingController(), gn = TextEditingController(), gp = TextEditingController();
+  late final name = TextEditingController(), phone = TextEditingController(), item = TextEditingController();
   late final price = TextEditingController(text: widget.price == 0 ? '' : widget.price.round().toString());
   late final down = TextEditingController(text: widget.down == 0 ? '' : widget.down.round().toString());
   late final mk = TextEditingController(text: nf(widget.markup));
@@ -398,7 +398,6 @@ class _NcS extends State<NewContract> {
       fld('السلعة', c: item),
       Row(children: [Expanded(child: fld('السعر الإجمالي', c: price, num: true, f: rf)), const SizedBox(width: 10), Expanded(child: fld('الدفعة المقدمة', c: down, num: true, f: rf))]),
       fld('نسبة الربح ٪ على المبلغ الممول', c: mk, num: true, f: rf),
-      Row(children: [Expanded(flex: 6, child: fld('اسم الضامن (مطلوب)', c: gn)), const SizedBox(width: 10), Expanded(flex: 5, child: fld('هاتف الضامن', c: gp, num: true))]),
       const Text('عدد الأقساط', style: mu),
       const SizedBox(height: 6),
       seg([for (final n in ns) '$n'], ni, (v) => setState(() => ni = v)),
@@ -415,8 +414,7 @@ class _NcS extends State<NewContract> {
       btn('إنشاء العقد', () {
         if (name.text.trim().isEmpty || phone.text.trim().isEmpty || item.text.trim().isEmpty) return sb(c, 'أكمل بيانات العميل والسلعة');
         if (p <= 0 || d < 0 || d >= p) return sb(c, 'تحقق من السعر والدفعة المقدمة');
-        if (gn.text.trim().isEmpty || gp.text.trim().isEmpty) return sb(c, 'بيانات الضامن مطلوبة');
-        final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni], gName: gn.text, gPhone: gp.text);
+        final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni]);
         Navigator.pushReplacement(c, MaterialPageRoute(builder: (_) => ContractDetail(k.id)));
       }),
     ]);
@@ -516,7 +514,6 @@ class CustomerProfile extends StatelessWidget {
           hd('العقود'),
           if (ks.isEmpty) empty('لا توجد عقود لهذا العميل'),
           for (final k in ks) Item('${ks.indexOf(k) + 1}', '#${k.id} · ${k.item}', 'قسط ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
-          if (ks.isNotEmpty) ...[hd('الضامن'), Box(kv(ks.first.gName, ks.first.gPhone, first: true))],
         ]);
       });
 }
@@ -630,6 +627,21 @@ class _StS extends State<Settlement> {
               db.settle(k);
               if (c.mounted) { Navigator.pop(c); sb(c, 'تمت تسوية العقد'); }
             }),
+            const SizedBox(height: 10),
+            btn('سداد جزئي', () async {
+              final v = await ask(c, 'المبلغ المدفوع الآن', num: true);
+              final a = pv(v ?? '').toDouble();
+              if (a <= 0) return;
+              if (a >= rem) {
+                if (c.mounted) sb(c, 'المبلغ يغطي كامل المتبقي، استخدم «تسوية العقد»');
+                return;
+              }
+              if (!c.mounted) return;
+              final m = await pickMethod(c, a, 0);
+              if (m == null) return;
+              final i = db.payPartial(k, a, m);
+              if (i != null && c.mounted) go(c, Receipt(k.id, k.insts.indexOf(i)));
+            }, outline: true),
           ],
           if (t == 1) ...[
             Box(Text('سيُنقل القسط القادم (${dstr(k.next!.due)}) إلى نهاية الجدول، وتمتد مدة العقد شهرًا.')),
@@ -678,20 +690,15 @@ class SettingsScr extends StatelessWidget {
           }),
         ]),
         sec('البيانات', [
-          row('نسخ احتياطي إلى الحافظة', '', () async {
-            await Clipboard.setData(ClipboardData(text: db.export()));
-            if (c.mounted) sb(c, 'تم نسخ البيانات — الصقها في مكان آمن');
+          row('نسخ احتياطي إلى الجهاز', '', () async {
+            final m = await backupFile();
+            if (c.mounted) sb(c, m);
           }),
-          row('استعادة من الحافظة', '', () async {
-            final d = await Clipboard.getData('text/plain');
-            try {
-              db.restore(d?.text ?? '');
-              if (c.mounted) sb(c, 'تمت الاستعادة');
-            } catch (_) {
-              if (c.mounted) sb(c, 'النص في الحافظة ليس نسخة صالحة');
-            }
+          row('استعادة من ملف في الجهاز', '', () async {
+            if (!await sure(c, 'ستُستبدل البيانات الحالية بالنسخة المختارة. متابعة؟')) return;
+            final m = await restoreFile();
+            if (c.mounted) sb(c, m);
           }),
-          row('تحميل بيانات تجريبية', '', () => db.seed()),
           row('حذف كل البيانات', '', () async {
             if (await sure(c, 'حذف كل العملاء والعقود نهائيًا؟')) db.reset();
           }),

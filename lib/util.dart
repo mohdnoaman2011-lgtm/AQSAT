@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -56,10 +59,31 @@ Future<void> printDoc(String name, String title, List<List<String>> rows,
         pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
           pw.Text('توقيع البائع: ________'),
           pw.Text('توقيع العميل: ________'),
-          pw.Text('توقيع الضامن: ________'),
         ]),
       ],
     ],
   ));
   await Printing.layoutPdf(onLayout: (_) => doc.save(), name: name);
+}
+
+/// حفظ نسخة احتياطية (ملف JSON) في مكان تختاره على الجهاز.
+Future<String> backupFile() async {
+  final n = today();
+  final name = 'aqsat-backup-${n.year}${n.month.toString().padLeft(2, '0')}${n.day.toString().padLeft(2, '0')}.json';
+  final p = await FilePicker.platform.saveFile(
+      dialogTitle: 'حفظ النسخة الاحتياطية', fileName: name, bytes: Uint8List.fromList(utf8.encode(db.export())));
+  return p == null ? 'لم يتم الحفظ' : 'تم حفظ النسخة الاحتياطية';
+}
+
+/// استعادة البيانات من ملف نسخة احتياطية على الجهاز.
+Future<String> restoreFile() async {
+  final r = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
+  final b = r?.files.single.bytes;
+  if (b == null) return 'لم يتم اختيار ملف';
+  try {
+    db.restore(utf8.decode(b));
+    return 'تمت استعادة البيانات';
+  } catch (_) {
+    return 'الملف ليس نسخة احتياطية صالحة';
+  }
 }

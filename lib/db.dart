@@ -50,18 +50,18 @@ class Inst {
 }
 
 class Contract {
-  final String id, cid, item, gName, gPhone;
+  final String id, cid, item;
   final double price, down, markup;
   final DateTime date;
   final List<Inst> insts;
-  Contract({required this.id, required this.cid, required this.item, required this.gName, required this.gPhone, required this.price, required this.down, required this.markup, required this.date, required this.insts});
+  Contract({required this.id, required this.cid, required this.item, required this.price, required this.down, required this.markup, required this.date, required this.insts});
   int get paidCount => insts.where((i) => i.isPaid).length;
   double get remaining => insts.where((i) => !i.isPaid).fold(0.0, (s, i) => s + i.amt);
   Inst? get next => insts.where((i) => !i.isPaid).firstOrNull;
   // 0 نشط · 1 متأخر · 2 مكتمل
   int get st => next == null ? 2 : (insts.any((i) => i.lateDays > 0) ? 1 : 0);
-  Map<String, dynamic> j() => {'id': id, 'cid': cid, 'item': item, 'gName': gName, 'gPhone': gPhone, 'price': price, 'down': down, 'markup': markup, 'date': date.toIso8601String(), 'insts': [for (final i in insts) i.j()]};
-  factory Contract.f(Map m) => Contract(id: m['id'], cid: m['cid'], item: m['item'], gName: m['gName'], gPhone: m['gPhone'], price: (m['price'] as num).toDouble(), down: (m['down'] as num).toDouble(), markup: (m['markup'] as num).toDouble(), date: DateTime.parse(m['date']), insts: [for (final x in m['insts']) Inst.f(x)]);
+  Map<String, dynamic> j() => {'id': id, 'cid': cid, 'item': item, 'price': price, 'down': down, 'markup': markup, 'date': date.toIso8601String(), 'insts': [for (final i in insts) i.j()]};
+  factory Contract.f(Map m) => Contract(id: m['id'], cid: m['cid'], item: m['item'], price: (m['price'] as num).toDouble(), down: (m['down'] as num).toDouble(), markup: (m['markup'] as num).toDouble(), date: DateTime.parse(m['date']), insts: [for (final x in m['insts']) Inst.f(x)]);
 }
 
 class Db extends ChangeNotifier {
@@ -129,10 +129,10 @@ class Db extends ChangeNotifier {
     return c;
   }
 
-  Contract create({required String name, required String phone, required String item, required double price, required double down, required double markup, required int n, required String gName, required String gPhone}) {
+  Contract create({required String name, required String phone, required String item, required double price, required double down, required double markup, required int n}) {
     final c = custs.where((x) => x.name == name.trim()).firstOrNull ?? addCust(name, phone);
     final a = (price - down) * (1 + markup / 100) / n, t = today();
-    final k = Contract(id: '${++seq}', cid: c.id, item: item.trim(), gName: gName.trim(), gPhone: gPhone.trim(), price: price, down: down, markup: markup, date: t, insts: [for (var i = 1; i <= n; i++) Inst(addMonths(t, i), a)]);
+    final k = Contract(id: '${++seq}', cid: c.id, item: item.trim(), price: price, down: down, markup: markup, date: t, insts: [for (var i = 1; i <= n; i++) Inst(addMonths(t, i), a)]);
     cons.insert(0, k);
     _save();
     return k;
@@ -149,6 +149,39 @@ class Db extends ChangeNotifier {
     i.left = k.remaining;
     _save();
     return i;
+  }
+
+  /// سداد جزئي: يغطي الأقساط بالترتيب، وما يتبقى من المبلغ يُخصم من القسط التالي
+  /// (يُقسَّم إلى جزء مدفوع وجزء متبقٍ بنفس تاريخ الاستحقاق).
+  Inst? payPartial(Contract k, double amount, String method) {
+    var a = amount;
+    final done = <Inst>[];
+    void mark(Inst i) {
+      i.paid = DateTime.now();
+      i.method = method;
+      i.rcpt = 'R-${k.id}-${k.paidCount}';
+      done.add(i);
+    }
+
+    while (a > 0.5) {
+      final i = k.next;
+      if (i == null) break;
+      if (a >= i.amt - 0.5) {
+        a -= i.amt;
+        mark(i);
+      } else {
+        final part = Inst(i.due, a);
+        k.insts.insert(k.insts.indexOf(i), part);
+        i.amt -= a;
+        a = 0;
+        mark(part);
+      }
+    }
+    for (final i in done) {
+      i.left = k.remaining;
+    }
+    _save();
+    return done.isEmpty ? null : done.last;
   }
 
   double settleDue(Contract k) => k.remaining * (1 - gn('disc') / 100);
@@ -185,14 +218,6 @@ class Db extends ChangeNotifier {
     _save();
   }
 
-  void seed() {
-    final a = create(name: 'عبدالله الحربي', phone: '0912345678', item: 'ثلاجة سامسونج 18 قدم', price: 935000, down: 100000, markup: 10, n: 10, gName: 'محمد إبراهيم', gPhone: '0911111111');
-    a.insts[0].due = today().subtract(const Duration(days: 5));
-    final b = create(name: 'سارة القحطاني', phone: '0922222222', item: 'غسالة LG', price: 620000, down: 120000, markup: 8, n: 6, gName: 'أحمد النور', gPhone: '0933333333');
-    pay(b, 'نقدًا');
-    create(name: 'محمد العتيبي', phone: '0944444444', item: 'جوال آيفون', price: 1380000, down: 300000, markup: 10, n: 12, gName: 'هالة بابكر', gPhone: '0955555555');
-    _save();
-  }
 }
 
 final db = Db();
