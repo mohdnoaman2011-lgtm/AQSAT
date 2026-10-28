@@ -75,6 +75,8 @@ class Db extends ChangeNotifier {
   double gn(String k) => (cfg[k] as num).toDouble();
   String gs(String k) => cfg[k].toString();
   Cust? cust(String id) => custs.where((c) => c.id == id).firstOrNull;
+  static String _norm(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ');
+  Cust? byName(String n) => custs.where((c) => _norm(c.name) == _norm(n)).firstOrNull;
   Contract? con(String id) => cons.where((k) => k.id == id).firstOrNull;
   List<(Contract, Inst)> get all => [for (final k in cons) for (final i in k.insts) (k, i)];
 
@@ -130,7 +132,7 @@ class Db extends ChangeNotifier {
   }
 
   Contract create({required String name, required String phone, required String item, required double price, required double down, required double markup, required int n}) {
-    final c = custs.where((x) => x.name == name.trim()).firstOrNull ?? addCust(name, phone);
+    final c = byName(name) ?? addCust(name, phone);
     final a = (price - down) * (1 + markup / 100) / n, t = today();
     final k = Contract(id: '${++seq}', cid: c.id, item: item.trim(), price: price, down: down, markup: markup, date: t, insts: [for (var i = 1; i <= n; i++) Inst(addMonths(t, i), a)]);
     cons.insert(0, k);

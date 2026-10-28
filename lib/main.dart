@@ -198,6 +198,10 @@ Future<bool> sure(BuildContext c, String t) async =>
         builder: (d) => AlertDialog(title: Text(t), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')), TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('تأكيد'))])) ??
     false;
 
+Future<void> alert(BuildContext c, String m) => showDialog<void>(
+    context: c,
+    builder: (d) => AlertDialog(title: const Text('تنبيه'), content: Text(m), actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('حسنًا'))]));
+
 Future<String?> pickMethod(BuildContext c, double amt, double fee) => showModalBottomSheet<String>(
     context: c,
     builder: (d) => SafeArea(
@@ -376,14 +380,15 @@ class ContractDetail extends StatelessWidget {
 class NewContract extends StatefulWidget {
   final double price, down, markup;
   final int n;
-  const NewContract({this.price = 0, this.down = 0, this.markup = 0, this.n = 10, super.key});
+  final Cust? cust; // عند فتحها من ملف عميل موجود
+  const NewContract({this.price = 0, this.down = 0, this.markup = 0, this.n = 10, this.cust, super.key});
   @override
   State<NewContract> createState() => _NcS();
 }
 
 class _NcS extends State<NewContract> {
   static const ns = [6, 10, 12, 24];
-  late final name = TextEditingController(), phone = TextEditingController(), item = TextEditingController();
+  late final name = TextEditingController(text: widget.cust?.name), phone = TextEditingController(text: widget.cust?.phone), item = TextEditingController();
   late final price = TextEditingController(text: widget.price == 0 ? '' : widget.price.round().toString());
   late final down = TextEditingController(text: widget.down == 0 ? '' : widget.down.round().toString());
   late final mk = TextEditingController(text: nf(widget.markup));
@@ -395,7 +400,8 @@ class _NcS extends State<NewContract> {
     final p = pv(price.text).toDouble(), d = pv(down.text).toDouble(), m = pv(mk.text).toDouble();
     final monthly = p > d ? (p - d) * (1 + m / 100) / ns[ni] : 0.0;
     return Pg('عقد تقسيط جديد', back: true, [
-      fld('اسم العميل', c: name),
+      fld('اسم العميل', c: name, f: rf),
+      if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا الاسم موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
       fld('هاتف العميل', c: phone, num: true),
       fld('السلعة', c: item),
       Row(children: [Expanded(child: fld('السعر الإجمالي', c: price, num: true, f: rf)), const SizedBox(width: 10), Expanded(child: fld('الدفعة المقدمة', c: down, num: true, f: rf))]),
@@ -413,9 +419,23 @@ class _NcS extends State<NewContract> {
         ])),
       ),
       const SizedBox(height: 16),
-      btn('إنشاء العقد', () {
+      btn('إنشاء العقد', () async {
         if (name.text.trim().isEmpty || phone.text.trim().isEmpty || item.text.trim().isEmpty) return sb(c, 'أكمل بيانات العميل والسلعة');
         if (p <= 0 || d < 0 || d >= p) return sb(c, 'تحقق من السعر والدفعة المقدمة');
+        if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) {
+          final use = await showDialog<bool>(
+                  context: c,
+                  builder: (d) => AlertDialog(
+                        title: const Text('تنبيه'),
+                        content: const Text('هذا الاسم موجود مسبقًا. سيُضاف العقد الجديد إلى ملف العميل نفسه.'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تعديل الاسم')),
+                          TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('إضافة عقد للعميل')),
+                        ],
+                      )) ??
+              false;
+          if (!use || !c.mounted) return;
+        }
         final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni]);
         Navigator.pushReplacement(c, MaterialPageRoute(builder: (_) => ContractDetail(k.id)));
       }),
@@ -489,6 +509,7 @@ class _CuS extends State<CustomersScr> {
           onPressed: () async {
             final n = await ask(c, 'اسم العميل');
             if (n == null || n.trim().isEmpty || !c.mounted) return;
+            if (db.byName(n) != null) return alert(c, 'هذا الاسم موجود مسبقًا');
             final p = await ask(c, 'رقم الهاتف', num: true);
             if (p != null && p.trim().isNotEmpty) db.addCust(n, p);
           },
@@ -513,6 +534,7 @@ class CustomerProfile extends StatelessWidget {
           const SizedBox(height: 14),
           Row(children: [stat('${ks.where((k) => k.st != 2).length}', 'عقود نشطة'), stat(money(remOf(x)), 'المتبقي'), stat('${r.$3}٪', 'نسبة الالتزام', warn: r.$2 == K.late)]),
           two(btn('اتصال', () => callPhone(x.phone), outline: true), btn('واتساب', () => openWa(x.phone, 'السلام عليكم ${x.name}'))),
+        btn('عقد جديد لهذا العميل', () => go(c, NewContract(cust: x)), dark: true),
           hd('العقود'),
           if (ks.isEmpty) empty('لا توجد عقود لهذا العميل'),
           for (final k in ks) Item('${ks.indexOf(k) + 1}', '#${k.id} · ${k.item}', 'قسط ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
