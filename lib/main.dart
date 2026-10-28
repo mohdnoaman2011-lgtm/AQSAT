@@ -259,6 +259,8 @@ class Home extends StatelessWidget {
         final got = mo.where((e) => e.$2.isPaid).fold(0.0, (s, e) => s + e.$2.amt);
         final pct = tot == 0 ? 0.0 : got / tot;
         final un = all.where((e) => !e.$2.isPaid).toList()..sort((a, b) => a.$2.due.compareTo(b.$2.due));
+        // قسط واحد فقط لكل عقد (القسط التالي)، حتى لا يتكرر اسم العميل
+        final nxt = [for (final k in db.cons) if (k.next != null) (k, k.next!)]..sort((a, b) => a.$2.due.compareTo(b.$2.due));
         return Pg(
           'لوحة التحصيل',
           [
@@ -286,7 +288,7 @@ class Home extends StatelessWidget {
             const SizedBox(height: 16),
             hd('الأقساط القادمة'),
             if (un.isEmpty) empty('لا توجد أقساط مستحقة.\nأضف عقدًا جديدًا من الزر بالأسفل.'),
-            for (final (k, i) in un.take(5)) instItem(c, k, i),
+            for (final (k, i) in nxt.take(5)) instItem(c, k, i),
           ],
           acts: [IconButton(tooltip: 'حاسبة الأقساط', onPressed: () => go(c, const Calc()), icon: const Icon(Icons.calculate_outlined))],
           fab: FloatingActionButton.extended(backgroundColor: ink, foregroundColor: Colors.white, onPressed: () => go(c, const NewContract()), icon: const Icon(Icons.add), label: const Text('عقد جديد')),
