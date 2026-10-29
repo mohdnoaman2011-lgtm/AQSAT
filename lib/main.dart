@@ -759,6 +759,7 @@ class SettingsScr extends StatelessWidget {
         ]),
         sec('البيانات', [
           row('نسخ احتياطي إلى الجهاز', '', () async {
+            if (db.custs.isEmpty && db.cons.isEmpty) return alert(c, 'لا توجد بيانات للنسخ الاحتياطي');
             final m = await backupFile();
             if (c.mounted) sb(c, m);
           }),
