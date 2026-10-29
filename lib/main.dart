@@ -13,6 +13,13 @@ const sl = ['نشط', 'متأخر', 'مكتمل'];
 const sk = [K.neu, K.late, K.ok];
 
 void go(BuildContext c, Widget w) => Navigator.push(c, MaterialPageRoute(builder: (_) => w));
+/// الحرف الأول للصورة الرمزية: يتجاوز «ال» التعريف حتى لا يظهر الحرف «ا» فقط
+String ini(String n) {
+  var t = n.trim();
+  if (t.length > 3 && t.startsWith('ال')) t = t.substring(2);
+  return t.isEmpty ? '؟' : t.substring(0, 1);
+}
+
 void sb(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
 
 Future<void> main() async {
@@ -210,7 +217,7 @@ Widget stat(String v, String l, {bool warn = false}) => Expanded(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: warn ? const Color(0xFFFDEBDD) : Colors.white, borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(v, style: bd.copyWith(fontSize: 16, color: warn ? const Color(0xFF9A3412) : ink)),
+            FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(v, style: bd.copyWith(fontSize: 16, color: warn ? const Color(0xFF9A3412) : ink))),
             Text(l, style: TextStyle(fontSize: 12, color: warn ? const Color(0xFF9A3412) : muted)),
           ]),
         )));
@@ -269,7 +276,7 @@ double remOf(Cust c) => consOf(c).fold(0.0, (s, k) => s + k.remaining);
 
 Widget instItem(BuildContext c, Contract k, Inst i) {
   final cu = db.cust(k.cid), late = i.lateDays;
-  return Item((cu?.name ?? '؟')[0], cu?.name ?? '', '${k.item} · قسط ${k.insts.indexOf(i) + 1} من ${k.insts.length}', money(i.amt),
+  return Item(ini(cu?.name ?? ''), cu?.name ?? '', '${k.item} · قسط ${k.insts.indexOf(i) + 1} من ${k.insts.length}', money(i.amt),
       late > 0 ? 'متأخر $late يوم' : (i.due == today() ? 'اليوم' : dstr(i.due)), late > 0 ? K.late : K.neu,
       onTap: () => go(c, ContractDetail(k.id)));
 }
@@ -362,7 +369,7 @@ class _CsS extends State<ContractsScr> {
           seg(['الكل', 'نشط', 'متأخر', 'مكتمل'], f, (v) => setState(() => f = v)),
           if (list.isEmpty) empty('لا توجد عقود'),
           for (final k in list)
-            Item((db.cust(k.cid)?.name ?? '؟')[0], '#${k.id} · ${db.cust(k.cid)?.name}', '${k.item} · ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
+            Item(ini(db.cust(k.cid)?.name ?? ''), '#${k.id} · ${db.cust(k.cid)?.name}', '${k.item} · ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
         ]);
       });
 }
@@ -389,7 +396,7 @@ class ContractDetail extends StatelessWidget {
         return Pg('عقد #${k.id}', back: true, [
           Box(Column(children: [
             Row(children: [
-              CircleAvatar(radius: 24, backgroundColor: const Color(0xFFE3F1EA), child: Text(cu.name[0], style: bd.copyWith(color: okFg))),
+              CircleAvatar(radius: 24, backgroundColor: const Color(0xFFE3F1EA), child: Text(ini(cu.name), style: bd.copyWith(color: okFg))),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(cu.name, style: bd), Text(k.item, style: mu)])),
               Pill(sl[k.st], sk[k.st]),
@@ -559,7 +566,7 @@ class _CuS extends State<CustomersScr> {
           if (list.isEmpty) empty('لا يوجد عملاء'),
           for (final x in list) () {
             final r = rate(x);
-            return Item(x.name[0], x.name, '${consOf(x).length} عقد · ${x.phone}', money(remOf(x)), r.$1, r.$2, onTap: () => go(c, CustomerProfile(x.id)));
+            return Item(ini(x.name), x.name, '${consOf(x).length} عقد · ${x.phone}', money(remOf(x)), r.$1, r.$2, onTap: () => go(c, CustomerProfile(x.id)));
           }(),
         ], fab: FloatingActionButton.extended(
           backgroundColor: ink, foregroundColor: Colors.white, icon: const Icon(Icons.person_add_alt), label: const Text('عميل جديد'),
@@ -584,7 +591,7 @@ class CustomerProfile extends StatelessWidget {
         final ks = consOf(x), r = rate(x);
         return Pg('ملف العميل', back: true, [
           Row(children: [
-            CircleAvatar(radius: 30, backgroundColor: green, child: Text(x.name[0], style: bd.copyWith(color: Colors.white, fontSize: 22))),
+            CircleAvatar(radius: 30, backgroundColor: green, child: Text(ini(x.name), style: bd.copyWith(color: Colors.white, fontSize: 22))),
             const SizedBox(width: 14),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(x.name, style: bd.copyWith(fontSize: 18)), Text(x.phone, style: mu)]),
           ]),
@@ -647,7 +654,7 @@ class _RpS extends State<ReportsScr> {
           if (top.isEmpty) empty('لا توجد متأخرات 👌'),
           for (final e in top.take(3)) () {
             final x = db.cust(e.key);
-            return Item((x?.name ?? '؟')[0], x?.name ?? '', '${late.where((l) => l.$1.cid == e.key).length} أقساط متأخرة', money(e.value), 'متأخر', K.late, onTap: x == null ? null : () => go(c, CustomerProfile(x.id)));
+            return Item(ini(x?.name ?? ''), x?.name ?? '', '${late.where((l) => l.$1.cid == e.key).length} أقساط متأخرة', money(e.value), 'متأخر', K.late, onTap: x == null ? null : () => go(c, CustomerProfile(x.id)));
           }(),
         ]);
       });
