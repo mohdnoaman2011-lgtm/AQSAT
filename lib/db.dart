@@ -75,7 +75,16 @@ class Db extends ChangeNotifier {
   double gn(String k) => (cfg[k] as num).toDouble();
   String gs(String k) => cfg[k].toString();
   Cust? cust(String id) => custs.where((c) => c.id == id).firstOrNull;
-  static String _norm(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ');
+  /// توحيد الاسم للمقارنة: لا فرق بين أ/إ/آ/ا، ولا بين ة/ه، ولا بين ى/ي،
+  /// ولا بين مسافة وأكثر، ولا يؤثر التشكيل والتطويل
+  static String _norm(String s) => s
+      .replaceAll(RegExp(r'[\u064B-\u065F\u0670\u0640]'), '')
+      .replaceAll(RegExp(r'[أإآٱ]'), 'ا')
+      .replaceAll('ة', 'ه')
+      .replaceAll('ى', 'ي')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .toLowerCase();
   Cust? byName(String n) => custs.where((c) => _norm(c.name) == _norm(n)).firstOrNull;
   Contract? con(String id) => cons.where((k) => k.id == id).firstOrNull;
   List<(Contract, Inst)> get all => [for (final k in cons) for (final i in k.insts) (k, i)];
