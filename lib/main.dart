@@ -1,1039 +1,841 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'db.dart';
+import 'util.dart';
 
-const teal = Color(0xFF0F766E), deep = Color(0xFF0B3D38), mute = Color(0xFF7C8F8B);
-const defaultMsg = 'السلام عليكم {name}، نذكّرك بقسط {item} رقم {n} بمبلغ {amount} المستحق بتاريخ {date}. شكراً لك.';
+const green = Color(0xFF0F6B4F), ink = Color(0xFF14201C), bg = Color(0xFFF6F7F4);
+const muted = Color(0xFF4B5651), line = Color(0xFFD5DAD4), okFg = Color(0xFF0B5A41);
+const bd = TextStyle(fontWeight: FontWeight.bold);
+const mu = TextStyle(fontSize: 13, color: muted);
+const sl = ['نشط', 'متأخر', 'مكتمل'];
+const sk = [K.neu, K.late, K.ok];
 
-String money(num v) => v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
-String cur(num v) => '${money(v)} ${app.currency}'.trim();
-String dateStr(DateTime d) => '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
-// مقارنة الأسماء: لا فرق بين أ/إ/آ/ا، ة/ه، ى/ي، المسافات المتعددة، والتشكيل
-String normName(String s) => s
-    .replaceAll(RegExp(r'[\u064B-\u065F\u0670\u0640]'), '')
-    .replaceAll(RegExp(r'[أإآٱ]'), 'ا')
-    .replaceAll('ة', 'ه')
-    .replaceAll('ى', 'ي')
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .trim()
-    .toLowerCase();
-bool sameName(String a, String b) => normName(a) == normName(b);
-Future<void> shareText(String text, {String? subject}) => SharePlus.instance.share(ShareParams(text: text, subject: subject));
-void snack(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
-
-// ---------- النموذج ----------
-class Payment {
-  Payment(this.no, this.date, this.amount);
-  final int no;
-  final DateTime date;
-  final double amount;
-  Map<String, dynamic> toJson() => {'no': no, 'date': date.toIso8601String(), 'amount': amount};
-  factory Payment.fromJson(Map<String, dynamic> j) => Payment(j['no'] as int, DateTime.parse(j['date'] as String), (j['amount'] as num).toDouble());
+void go(BuildContext c, Widget w) => Navigator.push(c, MaterialPageRoute(builder: (_) => w));
+/// الحرف الأول للصورة الرمزية: يتجاوز «ال» التعريف حتى لا يظهر الحرف «ا» فقط
+String ini(String n) {
+  var t = n.trim();
+  if (t.length > 3 && t.startsWith('ال')) t = t.substring(2);
+  return t.isEmpty ? '؟' : t.substring(0, 1);
 }
 
-class Contract {
-  Contract({required this.customer, required this.phone, required this.item, required this.price, required this.down,
-      required this.profit, required this.months, required this.firstDate, List<Payment>? payments}) : payments = payments ?? [];
-  final String customer, phone, item;
-  final double price, down, profit;
-  final int months;
-  final DateTime firstDate;
-  final List<Payment> payments;
-  int get paid => payments.length;
-  double get monthly => (price - down) * (1 + profit / 100) / months;
-  double get remaining => monthly * (months - paid);
-  double get collected => down + monthly * paid;
-  DateTime dueOf(int i) => DateTime(firstDate.year, firstDate.month + i, firstDate.day);
-  bool get done => paid >= months;
-  bool get late => !done && dueOf(paid).isBefore(DateTime.now());
-  String get status => done ? 'مكتمل' : (late ? 'متأخر' : 'نشط');
-  Map<String, dynamic> toJson() => {
-        'customer': customer, 'phone': phone, 'item': item, 'price': price, 'down': down, 'profit': profit,
-        'months': months, 'firstDate': firstDate.toIso8601String(), 'payments': payments.map((p) => p.toJson()).toList(),
-      };
-  factory Contract.fromJson(Map<String, dynamic> j) => Contract(
-        customer: j['customer'] as String, phone: (j['phone'] ?? '') as String, item: j['item'] as String,
-        price: (j['price'] as num).toDouble(), down: (j['down'] as num).toDouble(), profit: (j['profit'] as num).toDouble(),
-        months: j['months'] as int, firstDate: DateTime.parse(j['firstDate'] as String),
-        payments: (j['payments'] as List).map((e) => Payment.fromJson(e as Map<String, dynamic>)).toList(),
-      );
-}
-
-// ---------- الحالة والتخزين المحلي ----------
-class AppState extends ChangeNotifier {
-  late SharedPreferences sp;
-  List<Contract> contracts = [];
-  int receiptNo = 0;
-  bool dark = false, alertLate = true;
-  String store = '', phone = '', currency = '', msg = defaultMsg;
-
-  Future<void> load() async {
-    sp = await SharedPreferences.getInstance();
-    final raw = sp.getString('data');
-    if (raw != null) _apply(jsonDecode(raw) as Map<String, dynamic>);
-  }
-
-  void _apply(Map<String, dynamic> j) {
-    contracts = (j['contracts'] as List).map((e) => Contract.fromJson(e as Map<String, dynamic>)).toList();
-    receiptNo = (j['receiptNo'] ?? 0) as int;
-    dark = (j['dark'] ?? false) as bool;
-    alertLate = (j['alertLate'] ?? true) as bool;
-    store = (j['store'] ?? '') as String;
-    phone = (j['phone'] ?? '') as String;
-    currency = (j['currency'] ?? '') as String;
-    msg = (j['msg'] ?? defaultMsg) as String;
-  }
-
-  String export() => jsonEncode({
-        'contracts': contracts.map((c) => c.toJson()).toList(), 'receiptNo': receiptNo, 'dark': dark,
-        'alertLate': alertLate, 'store': store, 'phone': phone, 'currency': currency, 'msg': msg,
-      });
-
-  bool restore(String s) {
-    try { _apply(jsonDecode(s) as Map<String, dynamic>); save(); return true; } catch (_) { return false; }
-  }
-
-  void save() { sp.setString('data', export()); notifyListeners(); }
-  Contract? customerOf(String n) {
-    if (normName(n).isEmpty) return null;
-    for (final c in contracts) { if (sameName(c.customer, n)) return c; }
-    return null;
-  }
-  double get remaining => contracts.fold(0.0, (s, c) => s + c.remaining);
-  double get collected => contracts.fold(0.0, (s, c) => s + c.collected);
-  void add(Contract c) { contracts.insert(0, c); save(); }
-  void remove(Contract c) { contracts.remove(c); save(); }
-  Payment pay(Contract c) {
-    final p = Payment(++receiptNo, DateTime.now(), c.monthly);
-    c.payments.add(p);
-    save();
-    return p;
-  }
-}
-
-final app = AppState();
+void sb(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  await app.load();
-  runApp(const InstallmentsApp());
+  await db.load();
+  runApp(const App());
 }
 
-ThemeData mk(Brightness b) {
-  final d = b == Brightness.dark;
-  final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(20));
-  OutlineInputBorder ob(Color c, double w) => OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: c, width: w));
-  return ThemeData(
-    colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: b),
-    scaffoldBackgroundColor: d ? const Color(0xFF0E1D1B) : const Color(0xFFF1F5F4),
-    textTheme: GoogleFonts.tajawalTextTheme(ThemeData(brightness: b).textTheme),
-    appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, scrolledUnderElevation: 0, centerTitle: false),
-    filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56), shape: shape, textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))),
-    outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52), shape: shape, textStyle: const TextStyle(fontWeight: FontWeight.w700))),
-    inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: d ? const Color(0xFF16302C) : Colors.white, border: ob(Colors.transparent, 0), enabledBorder: ob(Colors.transparent, 0), focusedBorder: ob(teal, 2)),
-    navigationBarTheme: NavigationBarThemeData(
-      height: 72,
-      backgroundColor: d ? const Color(0xFF12262B) : Colors.white,
-      indicatorColor: d ? const Color(0xFF1F4A44) : const Color(0xFFD5ECE7),
-      labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-    ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(backgroundColor: teal, foregroundColor: Colors.white, shape: shape),
-    useMaterial3: true,
-  );
-}
-
-class InstallmentsApp extends StatelessWidget {
-  const InstallmentsApp({super.key});
+class App extends StatelessWidget {
+  const App({super.key});
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: app,
-        builder: (_, __) => MaterialApp(
-          title: 'البيع بالأقساط',
-          debugShowCheckedModeBanner: false,
-          locale: const Locale('ar'),
-          supportedLocales: const [Locale('ar')],
-          localizationsDelegates: const [GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate],
-          theme: mk(Brightness.light),
-          darkTheme: mk(Brightness.dark),
-          themeMode: app.dark ? ThemeMode.dark : ThemeMode.light,
-          home: const SplashPage(),
+  Widget build(BuildContext context) => MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'أقساط',
+        locale: const Locale('ar'),
+        supportedLocales: const [Locale('ar')],
+        localizationsDelegates: const [GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate],
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(seedColor: green, primary: green),
+          scaffoldBackgroundColor: bg,
+          textTheme: GoogleFonts.ibmPlexSansArabicTextTheme().apply(bodyColor: ink, displayColor: ink),
         ),
+        home: const Splash(),
       );
 }
 
-// ---------- مكونات التصميم ----------
-void open(BuildContext c, Widget w) => Navigator.push(c, MaterialPageRoute(builder: (_) => w));
+// ───────── شاشة البداية ─────────
+class Splash extends StatefulWidget {
+  const Splash({super.key});
+  @override
+  State<Splash> createState() => _SplashS();
+}
 
-Widget box(Widget child, {Color? color, EdgeInsets pad = const EdgeInsets.all(16)}) => Builder(builder: (c) {
-      final d = Theme.of(c).brightness == Brightness.dark;
-      return Container(
-        padding: pad,
-        decoration: BoxDecoration(
-          color: color ?? (d ? const Color(0xFF16302C) : Colors.white),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: d ? null : const [BoxShadow(color: Color(0x0F0B3D38), blurRadius: 18, offset: Offset(0, 6))],
-        ),
-        child: child,
-      );
+class _SplashS extends State<Splash> {
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(milliseconds: 2200), () {
+      if (!mounted) return;
+      Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 500),
+            pageBuilder: (_, __, ___) => const Shell(),
+            transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+          ));
     });
-
-Widget title(String t, {Widget? action}) => Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [Text(t, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)), if (action != null) action],
-    );
-
-Widget section(String t, {Widget? action}) => Padding(
-      padding: const EdgeInsets.only(top: 22, bottom: 10),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(t, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)), if (action != null) action]),
-    );
-
-Widget ibox(IconData i, Color c) => Container(
-      width: 42, height: 42,
-      decoration: BoxDecoration(color: c.withAlpha(30), borderRadius: BorderRadius.circular(14)),
-      child: Icon(i, color: c, size: 22),
-    );
-
-Widget empty(IconData i, String t) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40),
-      child: Column(children: [Icon(i, size: 56, color: mute), const SizedBox(height: 10), Text(t, style: const TextStyle(color: mute))]),
-    );
-
-class Reveal extends StatelessWidget {
-  const Reveal(this.i, this.child, {super.key});
-  final int i;
-  final Widget child;
-  @override
-  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: 1),
-        duration: Duration(milliseconds: 350 + (i > 6 ? 6 : i) * 70),
-        curve: Curves.easeOutCubic,
-        builder: (_, v, c) => Opacity(opacity: v, child: Transform.translate(offset: Offset(0, (1 - v) * 18), child: c)),
-        child: child,
-      );
-}
-
-class Counter extends StatelessWidget {
-  const Counter(this.v, {super.key, this.style});
-  final double v;
-  final TextStyle? style;
-  @override
-  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: v),
-        duration: const Duration(milliseconds: 800),
-        curve: Curves.easeOutCubic,
-        builder: (_, x, __) => Text(cur(x), style: style),
-      );
-}
-
-class RingAvatar extends StatelessWidget {
-  const RingAvatar(this.t, this.v, {super.key, this.size = 52});
-  final String t;
-  final double v, size;
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: size, height: size,
-        child: Stack(alignment: Alignment.center, children: [
-          TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: v),
-            duration: const Duration(milliseconds: 700),
-            curve: Curves.easeOutCubic,
-            builder: (_, x, __) => SizedBox.expand(child: CircularProgressIndicator(value: x, strokeWidth: 3.5, strokeCap: StrokeCap.round, color: teal, backgroundColor: const Color(0x330F766E))),
-          ),
-          CircleAvatar(radius: size / 2 - 6, backgroundColor: const Color(0xFFD5ECE7), child: Text(t, style: TextStyle(fontWeight: FontWeight.w800, color: deep, fontSize: size / 3))),
-        ]),
-      );
-}
-
-class StatusChip extends StatelessWidget {
-  const StatusChip(this.s, {super.key});
-  final String s;
-  @override
-  Widget build(BuildContext context) {
-    final late = s == 'متأخر', done = s == 'مكتمل' || s == 'مدفوع';
-    final bgc = late ? const Color(0xFFFDECDD) : done ? const Color(0xFFE3F3EF) : const Color(0xFFE8EEF9);
-    final fg = late ? const Color(0xFF8A3B05) : done ? const Color(0xFF0B5A50) : const Color(0xFF1F3F7A);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      decoration: BoxDecoration(color: bgc, borderRadius: BorderRadius.circular(99)),
-      child: Text(s, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: fg)),
-    );
   }
-}
 
-class ContractTile extends StatelessWidget {
-  const ContractTile(this.c, {super.key, this.i = 0});
-  final Contract c;
-  final int i;
-  @override
-  Widget build(BuildContext context) => Reveal(
-        i,
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(24),
-            onTap: () => open(context, DetailsPage(c)),
-            child: box(Row(children: [
-              RingAvatar(c.customer[0], c.paid / c.months),
-              const SizedBox(width: 14),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(c.customer, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                Text('${c.item} · قسط ${c.done ? c.months : c.paid + 1} من ${c.months}', style: const TextStyle(fontSize: 12, color: mute)),
-              ])),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text(money(c.monthly), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                const SizedBox(height: 4),
-                StatusChip(c.status),
-              ]),
-            ])),
-          ),
-        ),
-      );
-}
-
-Widget field(String label, TextEditingController ctl, {String? suffix, bool num = true, IconData? icon, ValueChanged<String>? onChanged}) => Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TextField(
-        controller: ctl,
-        onChanged: onChanged,
-        keyboardType: num ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(labelText: label, suffixText: suffix, prefixIcon: icon == null ? null : Icon(icon, color: mute)),
-      ),
-    );
-
-Future<String?> askText(BuildContext ctx, String t, String init, {int lines = 1}) {
-  final ctl = TextEditingController(text: init);
-  return showDialog<String>(
-    context: ctx,
-    builder: (d) => AlertDialog(
-      title: Text(t),
-      content: TextField(controller: ctl, maxLines: lines, autofocus: true),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
-        TextButton(onPressed: () => Navigator.pop(d, ctl.text.trim()), child: const Text('حفظ')),
-      ],
-    ),
-  );
-}
-
-Future<bool> confirm(BuildContext ctx, String t, String body) async =>
-    await showDialog<bool>(
-      context: ctx,
-      builder: (d) => AlertDialog(title: Text(t), content: Text(body), actions: [
-        TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')),
-        TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('تأكيد')),
-      ]),
-    ) ??
-    false;
-
-const heroGrad = BoxDecoration(
-  gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [Color(0xFF0B3D38), Color(0xFF0F766E)]),
-  borderRadius: BorderRadius.all(Radius.circular(28)),
-);
-
-Widget heroCard(Widget child) => Container(
-      decoration: heroGrad,
-      clipBehavior: Clip.antiAlias,
-      child: Stack(children: [
-        Positioned(left: -40, top: -40, child: Container(width: 140, height: 140, decoration: const BoxDecoration(color: Color(0x14FFFFFF), shape: BoxShape.circle))),
-        Positioned(right: -30, bottom: -50, child: Container(width: 120, height: 120, decoration: const BoxDecoration(color: Color(0x0FFFFFFF), shape: BoxShape.circle))),
-        Padding(padding: const EdgeInsets.all(22), child: child),
-      ]),
-    );
-
-// ---------- واتساب وPDF ----------
-String reminderText(Contract c) {
-  final i = c.done ? c.months - 1 : c.paid;
-  return app.msg
-      .replaceAll('{name}', c.customer)
-      .replaceAll('{item}', c.item)
-      .replaceAll('{n}', '${i + 1}')
-      .replaceAll('{amount}', cur(c.monthly))
-      .replaceAll('{date}', dateStr(c.dueOf(i)));
-}
-
-Future<void> whatsapp(BuildContext ctx, String phone, String text) async {
-  final p = phone.replaceAll(RegExp(r'[^0-9]'), '');
-  if (p.isEmpty) { snack(ctx, 'أضف رقم هاتف العميل أولاً (بصيغة دولية)'); return; }
-  try {
-    final ok = await launchUrl(Uri.parse('https://wa.me/$p?text=${Uri.encodeComponent(text)}'), mode: LaunchMode.externalApplication);
-    if (!ok && ctx.mounted) snack(ctx, 'تعذر فتح واتساب');
-  } catch (_) {
-    if (ctx.mounted) snack(ctx, 'تعذر فتح واتساب');
-  }
-}
-
-Future<void> printDoc(BuildContext ctx, String name, List<pw.Widget> children, {PdfPageFormat fmt = PdfPageFormat.a4}) async {
-  try {
-    final regular = await PdfGoogleFonts.tajawalRegular();
-    final bold = await PdfGoogleFonts.tajawalBold();
-    final doc = pw.Document(theme: pw.ThemeData.withFont(base: regular, bold: bold));
-    doc.addPage(pw.MultiPage(pageFormat: fmt, textDirection: pw.TextDirection.rtl, margin: const pw.EdgeInsets.all(32), build: (_) => children));
-    await Printing.layoutPdf(name: name, onLayout: (_) async => doc.save());
-  } catch (_) {
-    if (ctx.mounted) snack(ctx, 'تعذر إنشاء الملف، تأكد من الاتصال بالإنترنت (لتحميل الخط)');
-  }
-}
-
-pw.Widget pRow(String a, String b) => pw.Container(
-      padding: const pw.EdgeInsets.symmetric(vertical: 8),
-      decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey400))),
-      child: pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text(a, style: pw.TextStyle(color: PdfColors.grey700)), pw.Text(b)]),
-    );
-
-pw.Widget pHead(String t) => pw.Column(children: [
-      if (app.store.isNotEmpty) pw.Text(app.store, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-      if (app.phone.isNotEmpty) pw.Text(app.phone),
-      pw.SizedBox(height: 10),
-      pw.Text(t, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-      pw.SizedBox(height: 14),
-    ]);
-
-Future<void> printContract(BuildContext ctx, Contract c) => printDoc(ctx, 'عقد-${c.customer}', [
-      pHead('عقد بيع بالأقساط'),
-      pRow('العميل', c.customer), pRow('الهاتف', c.phone), pRow('السلعة', c.item),
-      pRow('السعر', cur(c.price)), pRow('الدفعة الأولى', cur(c.down)), pRow('نسبة الربح', '${c.profit}%'),
-      pRow('عدد الأقساط', '${c.months}'), pRow('القسط الشهري', cur(c.monthly)),
-      pw.SizedBox(height: 16),
-      pw.Table(border: pw.TableBorder.all(color: PdfColors.grey400), children: [
-        pw.TableRow(decoration: pw.BoxDecoration(color: PdfColors.grey200), children: [
-          for (final h in ['القسط', 'الاستحقاق', 'المبلغ', 'الحالة']) pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(h, style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-        ]),
-        for (var i = 0; i < c.months; i++)
-          pw.TableRow(children: [
-            for (final t in ['${i + 1}', dateStr(c.dueOf(i)), money(c.monthly), i < c.paid ? 'مدفوع' : 'قادم']) pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(t)),
-          ]),
-      ]),
-      pw.SizedBox(height: 40),
-      pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text('توقيع العميل: ................'), pw.Text('توقيع البائع: ................')]),
-    ]);
-
-// ---------- شاشة البداية ----------
-class SplashPage extends StatelessWidget {
-  const SplashPage({super.key});
   @override
   Widget build(BuildContext context) => Scaffold(
-        body: Container(
-          decoration: heroGrad.copyWith(borderRadius: BorderRadius.zero),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(children: [
-                const Spacer(),
-                TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0.6, end: 1),
-                  duration: const Duration(milliseconds: 700),
-                  curve: Curves.elasticOut,
-                  builder: (_, v, c) => Transform.scale(scale: v, child: c),
-                  child: Container(
-                    width: 104, height: 104,
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32)),
-                    child: const Icon(Icons.event_available_rounded, size: 54, color: teal),
-                  ),
-                ),
-                const SizedBox(height: 28),
-                const Reveal(2, Text('البيع بالأقساط', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: Colors.white))),
-                const SizedBox(height: 10),
-                const Reveal(4, Text('أدر عقودك وأقساطك وعملاءك في مكان واحد', textAlign: TextAlign.center, style: TextStyle(fontSize: 16, color: Color(0xFFCFE9E4)))),
-                const Spacer(),
-                FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: deep),
-                  onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Shell())),
-                  child: const Text('ابدأ الآن'),
-                ),
-              ]),
-            ),
+        backgroundColor: Colors.white,
+        body: Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 900),
+            curve: Curves.easeOut,
+            builder: (_, v, child) => Opacity(opacity: v, child: Transform.scale(scale: .85 + .15 * v, child: child)),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.asset('assets/logo.png', width: 260),
+              const SizedBox(height: 8),
+              const Text('إدارة البيع بالأقساط', style: TextStyle(color: muted, fontSize: 15)),
+              const SizedBox(height: 28),
+              const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 3, color: green)),
+            ]),
           ),
         ),
       );
 }
 
-// ---------- الهيكل ----------
+// ───────── مكونات مشتركة ─────────
+enum K { ok, late, neu }
+
+const _pc = {
+  K.ok: [Color(0xFFE3F1EA), okFg],
+  K.late: [Color(0xFFFDEBDD), Color(0xFF9A3412)],
+  K.neu: [Color(0xFFECEEEA), Color(0xFF3F4A46)],
+};
+
+Widget live(Widget Function() f) => ListenableBuilder(listenable: db, builder: (_, __) => f());
+
+class Pill extends StatelessWidget {
+  final String t;
+  final K k;
+  const Pill(this.t, this.k, {super.key});
+  @override
+  Widget build(BuildContext c) => Container(
+        margin: const EdgeInsets.only(top: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(color: _pc[k]![0], borderRadius: BorderRadius.circular(10)),
+        child: Text(t, style: TextStyle(fontSize: 12, color: _pc[k]![1])),
+      );
+}
+
+class Box extends StatelessWidget {
+  final Widget child;
+  final double pad;
+  final VoidCallback? onTap;
+  const Box(this.child, {this.pad = 16, this.onTap, super.key});
+  @override
+  Widget build(BuildContext c) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(onTap: onTap, child: Padding(padding: EdgeInsets.all(pad), child: child)),
+        ),
+      );
+}
+
+class Item extends StatelessWidget {
+  final String av, n, s, a, p;
+  final K k;
+  final VoidCallback? onTap;
+  const Item(this.av, this.n, this.s, this.a, this.p, this.k, {this.onTap, super.key});
+  @override
+  Widget build(BuildContext c) => Box(
+        Row(children: [
+          CircleAvatar(radius: 22, backgroundColor: const Color(0xFFE3F1EA), child: Text(av, style: bd.copyWith(color: okFg))),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(n, style: bd.copyWith(fontSize: 15)), Text(s, style: mu)])),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(a, style: bd.copyWith(fontSize: 14)), Pill(p, k)]),
+        ]),
+        pad: 14,
+        onTap: onTap,
+      );
+}
+
+class Pg extends StatelessWidget {
+  final String t;
+  final List<Widget> c;
+  final bool back;
+  final Widget? fab;
+  final List<Widget> acts;
+  const Pg(this.t, this.c, {this.back = false, this.fab, this.acts = const [], super.key});
+  @override
+  Widget build(BuildContext ctx) => Scaffold(
+        floatingActionButton: fab,
+        body: SafeArea(
+          child: ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 90), children: [
+            Row(children: [
+              if (back) ...[IconButton.outlined(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.arrow_forward)), const SizedBox(width: 10)],
+              Expanded(child: Text(t, style: bd.copyWith(fontSize: back ? 18 : 22))),
+              ...acts,
+            ]),
+            const SizedBox(height: 16),
+            ...c,
+          ]),
+        ),
+      );
+}
+
+Widget btn(String t, VoidCallback? f, {bool outline = false, bool dark = false}) {
+  final sh = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+  const sz = Size.fromHeight(52);
+  return outline
+      ? OutlinedButton(onPressed: f, style: OutlinedButton.styleFrom(minimumSize: sz, shape: sh, foregroundColor: green, backgroundColor: Colors.white, side: const BorderSide(color: green)), child: Text(t, style: bd))
+      : FilledButton(onPressed: f, style: FilledButton.styleFrom(minimumSize: sz, shape: sh, backgroundColor: dark ? ink : green), child: Text(t, style: bd));
+}
+
+Widget two(Widget a, Widget b) => Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Row(children: [Expanded(child: a), const SizedBox(width: 10), Expanded(child: b)]));
+
+Widget kv(String l, String v, {Color? c, bool first = false}) => Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFEDEFEB)))),
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: const TextStyle(color: muted)), Text(v, style: bd.copyWith(color: c))]),
+    );
+
+Widget seg(List<String> it, int a, ValueChanged<int> f) => Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(children: [
+        for (var i = 0; i < it.length; i++)
+          Expanded(
+              child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: GestureDetector(
+              onTap: () => f(i),
+              child: Container(
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: i == a ? green : Colors.white, border: i == a ? null : Border.all(color: line), borderRadius: BorderRadius.circular(14)),
+                child: Text(it[i], style: TextStyle(color: i == a ? Colors.white : ink, fontWeight: i == a ? FontWeight.bold : FontWeight.normal)),
+              ),
+            ),
+          )),
+      ]),
+    );
+
+Widget stat(String v, String l, {bool warn = false}) => Expanded(
+    child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: warn ? const Color(0xFFFDEBDD) : Colors.white, borderRadius: BorderRadius.circular(16)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(v, style: bd.copyWith(fontSize: 16, color: warn ? const Color(0xFF9A3412) : ink))),
+            Text(l, style: TextStyle(fontSize: 12, color: warn ? const Color(0xFF9A3412) : muted)),
+          ]),
+        )));
+
+Widget hd(String t) => Padding(padding: const EdgeInsets.only(top: 6, bottom: 10), child: Text(t, style: bd.copyWith(fontSize: 16)));
+Widget empty(String t) => Padding(padding: const EdgeInsets.all(32), child: Center(child: Text(t, textAlign: TextAlign.center, style: mu)));
+
+Widget fld(String l, {TextEditingController? c, ValueChanged<String>? f, bool num = false}) {
+  final b = OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line));
+  return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(controller: c, onChanged: f, keyboardType: num ? TextInputType.number : TextInputType.text, decoration: InputDecoration(labelText: l, filled: true, fillColor: Colors.white, border: b, enabledBorder: b)));
+}
+
+Future<String?> ask(BuildContext c, String t, {String init = '', bool num = false}) {
+  final k = TextEditingController(text: init);
+  return showDialog<String>(
+      context: c,
+      builder: (d) => AlertDialog(
+            title: Text(t),
+            content: TextField(controller: k, autofocus: true, keyboardType: num ? TextInputType.number : TextInputType.text),
+            actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')), TextButton(onPressed: () => Navigator.pop(d, k.text), child: const Text('حفظ'))],
+          ));
+}
+
+Future<bool> sure(BuildContext c, String t) async =>
+    await showDialog<bool>(
+        context: c,
+        builder: (d) => AlertDialog(title: Text(t), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')), TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('تأكيد'))])) ??
+    false;
+
+Future<void> alert(BuildContext c, String m) => showDialog<void>(
+    context: c,
+    builder: (d) => AlertDialog(title: const Text('تنبيه'), content: Text(m), actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('حسنًا'))]));
+
+Future<String?> pickMethod(BuildContext c, double amt, double fee) => showModalBottomSheet<String>(
+    context: c,
+    builder: (d) => SafeArea(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(padding: const EdgeInsets.all(16), child: Text('المبلغ: ${money(amt)}${fee > 0 ? ' (شامل غرامة ${money(fee)})' : ''}', style: bd)),
+          for (final m in ['نقدًا', 'تحويل بنكي']) ListTile(title: Text(m), onTap: () => Navigator.pop(d, m)),
+        ])));
+
+List<Contract> consOf(Cust c) => db.cons.where((k) => k.cid == c.id).toList();
+double remOf(Cust c) => consOf(c).fold(0.0, (s, k) => s + k.remaining);
+
+/// (تقييم، لون، نسبة الالتزام)
+(String, K, int) rate(Cust c) {
+  final ks = consOf(c), g = db.gi('grace');
+  final paid = [for (final k in ks) for (final i in k.insts.where((i) => i.isPaid)) i];
+  final ok = paid.where((i) => !i.paid!.isAfter(i.due.add(Duration(days: g + 1)))).length;
+  final pct = paid.isEmpty ? 100 : ok * 100 ~/ paid.length;
+  if (ks.any((k) => k.st == 1)) return ('متأخر', K.late, pct);
+  return pct >= 90 ? ('ملتزم', K.ok, pct) : ('متوسط', K.neu, pct);
+}
+
+Widget instItem(BuildContext c, Contract k, Inst i) {
+  final cu = db.cust(k.cid), late = i.lateDays;
+  return Item(ini(cu?.name ?? ''), cu?.name ?? '', '${k.item} · قسط ${k.insts.indexOf(i) + 1} من ${k.insts.length}', money(i.amt),
+      late > 0 ? 'متأخر $late يوم' : (i.due == today() ? 'اليوم' : dstr(i.due)), late > 0 ? K.late : K.neu,
+      onTap: () => go(c, ContractDetail(k.id)));
+}
+
+// ───────── الهيكل ─────────
 class Shell extends StatefulWidget {
   const Shell({super.key});
   @override
-  State<Shell> createState() => _ShellState();
+  State<Shell> createState() => _ShellS();
 }
 
-class _ShellState extends State<Shell> {
+class _ShellS extends State<Shell> {
   int i = 0;
-  void go(int n) { HapticFeedback.selectionClick(); setState(() => i = n); }
-  @override
-  Widget build(BuildContext context) {
-    final pages = [DashboardPage(go: go), const ContractsPage(), const CustomersPage(), const CalcPage(), const SettingsPage()];
-    return Scaffold(
-      body: SafeArea(
-        child: ListenableBuilder(
-          listenable: app,
-          builder: (_, __) => AnimatedSwitcher(duration: const Duration(milliseconds: 250), child: KeyedSubtree(key: ValueKey(i), child: pages[i])),
-        ),
-      ),
-      floatingActionButton: i <= 2 ? FloatingActionButton.extended(onPressed: () => open(context, const NewContractPage()), icon: const Icon(Icons.add_rounded), label: const Text('عقد جديد')) : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: i,
-        onDestinationSelected: go,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'الرئيسية'),
-          NavigationDestination(icon: Icon(Icons.description_outlined), selectedIcon: Icon(Icons.description_rounded), label: 'العقود'),
-          NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people_rounded), label: 'العملاء'),
-          NavigationDestination(icon: Icon(Icons.calculate_outlined), selectedIcon: Icon(Icons.calculate_rounded), label: 'الحاسبة'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings_rounded), label: 'الإعدادات'),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------- الرئيسية ----------
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key, required this.go});
-  final ValueChanged<int> go;
-
-  Widget quick(IconData i, String t, VoidCallback on) => Expanded(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(24),
-          onTap: on,
-          child: box(Column(children: [Icon(i, color: teal), const SizedBox(height: 6), Text(t, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700))]), pad: const EdgeInsets.symmetric(vertical: 14)),
-        ),
-      );
-
-  Widget stat(IconData i, Color c, String t, String v) => Expanded(
-        child: box(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          ibox(i, c), const SizedBox(height: 10),
-          Text(v, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-          Text(t, style: const TextStyle(fontSize: 12, color: mute)),
-        ]), pad: const EdgeInsets.all(14)),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final total = app.remaining + app.collected;
-    final ratio = total == 0 ? 0.0 : app.collected / total;
-    final upcoming = app.contracts.where((c) => !c.done).toList()..sort((a, b) => a.dueOf(a.paid).compareTo(b.dueOf(b.paid)));
-    final lateCount = app.contracts.where((c) => c.late).length;
-    final name = app.store.isEmpty ? 'البيع بالأقساط' : app.store;
-    return ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 100), children: [
-      Row(children: [
-        CircleAvatar(radius: 24, backgroundColor: const Color(0xFFD5ECE7), child: Text(name[0], style: const TextStyle(fontWeight: FontWeight.w800, color: deep, fontSize: 18))),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('مرحباً بك', style: TextStyle(fontSize: 13, color: mute)),
-          Text(name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-        ])),
-        IconButton.filledTonal(onPressed: () => go(4), icon: const Icon(Icons.settings_rounded)),
-      ]),
-      const SizedBox(height: 18),
-      Reveal(0, heroCard(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('المتبقي للتحصيل', style: TextStyle(color: Color(0xFFCFE9E4))),
-        const SizedBox(height: 4),
-        Counter(app.remaining, style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 14),
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: ratio),
-          duration: const Duration(milliseconds: 800),
-          curve: Curves.easeOutCubic,
-          builder: (_, v, __) => LinearProgressIndicator(value: v, minHeight: 8, borderRadius: BorderRadius.circular(9), backgroundColor: const Color(0x33FFFFFF), color: const Color(0xFF7FD6C8)),
-        ),
-        const SizedBox(height: 10),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('تم تحصيل ${cur(app.collected)}', style: const TextStyle(color: Color(0xFFCFE9E4), fontSize: 13)),
-          Text('${(ratio * 100).round()}%', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-        ]),
-      ]))),
-      const SizedBox(height: 14),
-      Row(children: [
-        quick(Icons.add_circle_outline_rounded, 'عقد جديد', () => open(context, const NewContractPage())),
-        const SizedBox(width: 10),
-        quick(Icons.calculate_outlined, 'الحاسبة', () => go(3)),
-        const SizedBox(width: 10),
-        quick(Icons.people_outline_rounded, 'العملاء', () => go(2)),
-      ]),
-      const SizedBox(height: 14),
-      Row(children: [
-        stat(Icons.description_rounded, teal, 'العقود', '${app.contracts.length}'),
-        const SizedBox(width: 10),
-        stat(Icons.autorenew_rounded, const Color(0xFF1F3F7A), 'نشطة', '${app.contracts.where((c) => !c.done).length}'),
-        const SizedBox(width: 10),
-        stat(Icons.warning_amber_rounded, const Color(0xFFB45309), 'متأخرة', '$lateCount'),
-      ]),
-      if (app.alertLate && lateCount > 0) ...[
-        const SizedBox(height: 14),
-        InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => go(1),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: const Color(0xFFFDECDD), borderRadius: BorderRadius.circular(20)),
-            child: Row(children: [
-              const Icon(Icons.notifications_active_rounded, color: Color(0xFF8A3B05)),
-              const SizedBox(width: 10),
-              Expanded(child: Text('$lateCount أقساط متأخرة تحتاج متابعة', style: const TextStyle(color: Color(0xFF8A3B05), fontWeight: FontWeight.w800))),
-              const Icon(Icons.chevron_left_rounded, color: Color(0xFF8A3B05)),
-            ]),
-          ),
-        ),
-      ],
-      section('الأقساط القادمة', action: TextButton(onPressed: () => go(1), child: const Text('عرض الكل'))),
-      if (upcoming.isEmpty) empty(Icons.inbox_rounded, 'لا توجد عقود نشطة. ابدأ بإضافة عقد جديد.'),
-      for (var k = 0; k < upcoming.length && k < 4; k++) ContractTile(upcoming[k], i: k),
-    ]);
-  }
-}
-
-// ---------- العقود ----------
-class ContractsPage extends StatefulWidget {
-  const ContractsPage({super.key});
-  @override
-  State<ContractsPage> createState() => _ContractsPageState();
-}
-
-class _ContractsPageState extends State<ContractsPage> {
-  String filter = 'الكل', q = '';
-  @override
-  Widget build(BuildContext context) {
-    final list = app.contracts.where((c) => (filter == 'الكل' || c.status == filter) && (c.customer + c.item).contains(q)).toList();
-    return ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 100), children: [
-      title('العقود'),
-      const SizedBox(height: 14),
-      TextField(onChanged: (v) => setState(() => q = v), decoration: const InputDecoration(hintText: 'ابحث باسم العميل أو السلعة', prefixIcon: Icon(Icons.search_rounded))),
-      const SizedBox(height: 12),
-      SegmentedButton<String>(
-        showSelectedIcon: false,
-        segments: [for (final f in ['الكل', 'نشط', 'متأخر', 'مكتمل']) ButtonSegment(value: f, label: Text(f))],
-        selected: {filter},
-        onSelectionChanged: (s) => setState(() => filter = s.first),
-      ),
-      const SizedBox(height: 16),
-      if (list.isEmpty) empty(Icons.description_outlined, 'لا توجد عقود'),
-      for (var k = 0; k < list.length; k++) ContractTile(list[k], i: k),
-    ]);
-  }
-}
-
-// ---------- العملاء ----------
-class CustomersPage extends StatelessWidget {
-  const CustomersPage({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final names = <String>[];
-    for (final c in app.contracts) { if (!names.any((n) => sameName(n, c.customer))) names.add(c.customer); }
-    return ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 100), children: [
-      title('العملاء'),
-      const SizedBox(height: 16),
-      if (names.isEmpty) empty(Icons.people_outline_rounded, 'لا يوجد عملاء بعد'),
-      for (var k = 0; k < names.length; k++)
-        Reveal(
-          k,
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(24),
-              onTap: () => open(context, CustomerPage(names[k])),
-              child: Builder(builder: (_) {
-                final cs = app.contracts.where((c) => sameName(c.customer, names[k])).toList();
-                final paid = cs.fold(0, (s, c) => s + c.paid), all = cs.fold(0, (s, c) => s + c.months);
-                return box(Row(children: [
-                  RingAvatar(names[k][0], all == 0 ? 0 : paid / all),
-                  const SizedBox(width: 14),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(names[k], style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                    Text('${cs.length} عقد', style: const TextStyle(fontSize: 12, color: mute)),
-                  ])),
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    const Text('متبقي', style: TextStyle(fontSize: 12, color: mute)),
-                    Text(money(cs.fold(0.0, (s, c) => s + c.remaining)), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                  ]),
-                ]));
-              }),
-            ),
-          ),
-        ),
-    ]);
-  }
-}
-
-class CustomerPage extends StatelessWidget {
-  const CustomerPage(this.name, {super.key});
-  final String name;
-  @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: app,
-        builder: (_, __) => Scaffold(
-          appBar: AppBar(title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800))),
-          body: ListView(padding: const EdgeInsets.all(20), children: [
-            for (final c in app.contracts.where((c) => sameName(c.customer, name))) ContractTile(c),
-          ]),
-        ),
-      );
-}
-
-// ---------- الحاسبة ----------
-class CalcPage extends StatefulWidget {
-  const CalcPage({super.key});
-  @override
-  State<CalcPage> createState() => _CalcPageState();
-}
-
-class _CalcPageState extends State<CalcPage> {
-  final price = TextEditingController(text: '12000'), down = TextEditingController(text: '2000');
-  final profit = TextEditingController(text: '15'), months = TextEditingController(text: '10');
-  double n(TextEditingController c) => double.tryParse(c.text) ?? 0;
-  void up(String _) => setState(() {});
-  @override
-  Widget build(BuildContext context) {
-    final m = n(months) < 1 ? 1 : n(months);
-    final total = (n(price) - n(down)) * (1 + n(profit) / 100);
-    return ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 40), children: [
-      title('حاسبة الأقساط'),
-      const SizedBox(height: 16),
-      heroCard(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('القسط الشهري', style: TextStyle(color: Color(0xFFCFE9E4))),
-        Text(money(total / m), style: const TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w800)),
-        const Divider(color: Color(0x33FFFFFF), height: 24),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('الإجمالي بعد الربح', style: TextStyle(color: Color(0xFFCFE9E4))),
-          Text(money(total), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-        ]),
-        const SizedBox(height: 6),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('إجمالي الربح', style: TextStyle(color: Color(0xFFCFE9E4))),
-          Text(money((n(price) - n(down)) * n(profit) / 100), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-        ]),
-      ])),
-      const SizedBox(height: 20),
-      field('سعر السلعة', price, icon: Icons.sell_outlined, onChanged: up),
-      field('الدفعة الأولى', down, icon: Icons.payments_outlined, onChanged: up),
-      Row(children: [
-        Expanded(child: field('نسبة الربح', profit, suffix: '%', onChanged: up)),
-        const SizedBox(width: 10),
-        Expanded(child: field('المدة', months, suffix: 'شهر', onChanged: up)),
-      ]),
-      const SizedBox(height: 6),
-      FilledButton(
-        onPressed: () => open(context, NewContractPage(price: price.text, down: down.text, profit: profit.text, months: months.text)),
-        child: const Text('إنشاء عقد بهذه القيم'),
-      ),
-    ]);
-  }
-}
-
-// ---------- عقد جديد ----------
-class NewContractPage extends StatefulWidget {
-  const NewContractPage({super.key, this.price = '', this.down = '0', this.profit = '15', this.months = '10'});
-  final String price, down, profit, months;
-  @override
-  State<NewContractPage> createState() => _NewContractPageState();
-}
-
-class _NewContractPageState extends State<NewContractPage> {
-  final name = TextEditingController(), phone = TextEditingController(), item = TextEditingController();
-  late final price = TextEditingController(text: widget.price), down = TextEditingController(text: widget.down);
-  late final profit = TextEditingController(text: widget.profit), months = TextEditingController(text: widget.months);
-  DateTime? first;
-  Contract? existing;
-
-  Future<void> pick() async {
-    final d = await showDatePicker(context: context, initialDate: first ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
-    if (d != null) setState(() => first = d);
-  }
-
-  void save() {
-    final p = double.tryParse(price.text), m = int.tryParse(months.text);
-    if (name.text.trim().isEmpty || item.text.trim().isEmpty || p == null || m == null || m < 1) {
-      snack(context, 'أكمل الحقول المطلوبة (الاسم، السلعة، السعر، المدة)');
-      return;
-    }
-    final ex = app.customerOf(name.text);
-    final c = Contract(customer: ex?.customer ?? name.text.trim(), phone: phone.text.trim().isEmpty ? (ex?.phone ?? '') : phone.text.trim(), item: item.text.trim(), price: p, down: double.tryParse(down.text) ?? 0,
-        profit: double.tryParse(profit.text) ?? 0, months: m, firstDate: first ?? DateTime.now());
-    app.add(c);
-    HapticFeedback.mediumImpact();
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DetailsPage(c)));
-  }
-
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('عقد جديد', style: TextStyle(fontWeight: FontWeight.w800))),
-        body: ListView(padding: const EdgeInsets.all(20), children: [
-          field('اسم العميل', name, num: false, icon: Icons.person_outline_rounded, onChanged: (v) {
-            final old = app.contracts.where((c) => sameName(c.customer, v) && c.phone.isNotEmpty);
-            if (old.isNotEmpty && phone.text.isEmpty) phone.text = old.first.phone;
-            setState(() => existing = app.customerOf(v));
-          }),
-          if (existing != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => open(context, CustomerPage(existing!.customer)),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: const Color(0xFFFDECDD), borderRadius: BorderRadius.circular(16)),
-                  child: Row(children: [
-                    const Icon(Icons.info_outline_rounded, color: Color(0xFF8A3B05)),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text('هذا العميل موجود مسبقاً (${existing!.customer}). سيُضاف العقد الجديد إلى نفس العميل.', style: const TextStyle(color: Color(0xFF8A3B05), fontWeight: FontWeight.w700, fontSize: 13))),
-                  ]),
-                ),
-              ),
-            ),
-          field('رقم الهاتف (بصيغة دولية بدون +)', phone, icon: Icons.phone_outlined),
-          field('السلعة', item, num: false, icon: Icons.inventory_2_outlined),
-          Row(children: [Expanded(child: field('السعر', price)), const SizedBox(width: 10), Expanded(child: field('الدفعة الأولى', down))]),
-          Row(children: [Expanded(child: field('نسبة الربح', profit, suffix: '%')), const SizedBox(width: 10), Expanded(child: field('المدة', months, suffix: 'شهر'))]),
-          OutlinedButton.icon(
-            onPressed: pick,
-            icon: const Icon(Icons.calendar_month_rounded),
-            label: Text(first == null ? 'اختيار تاريخ أول قسط' : 'أول قسط: ${dateStr(first!)}'),
-          ),
-          const SizedBox(height: 24),
-          FilledButton(onPressed: save, child: const Text('حفظ العقد')),
+        body: IndexedStack(index: i, children: const [Home(), ContractsScr(), CustomersScr(), ReportsScr(), SettingsScr()]),
+        bottomNavigationBar: NavigationBar(selectedIndex: i, onDestinationSelected: (v) => setState(() => i = v), destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'الرئيسية'),
+          NavigationDestination(icon: Icon(Icons.description_outlined), selectedIcon: Icon(Icons.description), label: 'العقود'),
+          NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'العملاء'),
+          NavigationDestination(icon: Icon(Icons.bar_chart_outlined), selectedIcon: Icon(Icons.bar_chart), label: 'التقارير'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'الإعدادات'),
         ]),
       );
 }
 
-// ---------- تفاصيل العقد ----------
-class DetailsPage extends StatelessWidget {
-  const DetailsPage(this.c, {super.key});
-  final Contract c;
-
-  Widget mini(String t, String v) => Expanded(
-        child: Column(children: [
-          Text(v, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
-          Text(t, style: const TextStyle(color: Color(0xFFCFE9E4), fontSize: 12)),
-        ]),
-      );
-
+// ───────── الرئيسية ─────────
+class Home extends StatelessWidget {
+  const Home({super.key});
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: app,
-        builder: (context, _) => Scaffold(
-          appBar: AppBar(title: const Text('تفاصيل العقد', style: TextStyle(fontWeight: FontWeight.w800)), actions: [
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded),
-              tooltip: 'حذف العقد',
-              onPressed: () async {
-                if (await confirm(context, 'حذف العقد؟', 'سيتم حذف العقد وكل دفعاته نهائياً.') && context.mounted) {
-                  app.remove(c);
-                  Navigator.pop(context);
-                }
-              },
-            ),
-          ]),
-          body: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 40), children: [
-            heroCard(Column(children: [
-              Row(children: [
-                SizedBox(
-                  width: 84, height: 84,
-                  child: Stack(alignment: Alignment.center, children: [
-                    SizedBox.expand(child: CircularProgressIndicator(value: c.paid / c.months, strokeWidth: 7, strokeCap: StrokeCap.round, color: const Color(0xFF7FD6C8), backgroundColor: const Color(0x33FFFFFF))),
-                    Text('${(c.paid / c.months * 100).round()}%', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
-                  ]),
-                ),
-                const SizedBox(width: 18),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(c.customer, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-                  Text(c.item, style: const TextStyle(color: Color(0xFFCFE9E4))),
-                  if (c.phone.isNotEmpty) Text(c.phone, style: const TextStyle(color: Color(0xFFCFE9E4), fontSize: 13)),
-                ])),
-              ]),
-              const Divider(color: Color(0x33FFFFFF), height: 28),
-              Row(children: [mini('مدفوع', money(c.collected)), mini('متبقي', money(c.remaining)), mini('القسط', money(c.monthly))]),
-            ])),
-            section('جدول الأقساط'),
-            for (var i = 0; i < c.months; i++) _step(context, i),
-            const SizedBox(height: 16),
-            if (!c.done)
-              FilledButton.icon(
-                icon: const Icon(Icons.payments_rounded),
-                onPressed: () async {
-                  if (!await confirm(context, 'تسجيل دفعة', 'تسجيل استلام ${cur(c.monthly)} للقسط ${c.paid + 1}؟') || !context.mounted) return;
-                  HapticFeedback.mediumImpact();
-                  final p = app.pay(c);
-                  open(context, ReceiptPage(c, p));
-                },
-                label: const Text('تسجيل دفعة'),
+  Widget build(BuildContext c) => live(() {
+        final t = today(), all = db.all;
+        final mo = all.where((e) => e.$2.due.year == t.year && e.$2.due.month == t.month);
+        final tot = mo.fold(0.0, (s, e) => s + e.$2.amt);
+        final got = mo.where((e) => e.$2.isPaid).fold(0.0, (s, e) => s + e.$2.amt);
+        final pct = tot == 0 ? 0.0 : got / tot;
+        final un = all.where((e) => !e.$2.isPaid).toList()..sort((a, b) => a.$2.due.compareTo(b.$2.due));
+        // قسط واحد فقط لكل عقد (القسط التالي)، حتى لا يتكرر اسم العميل
+        final nxt = [for (final k in db.cons) if (k.next != null) (k, k.next!)]..sort((a, b) => a.$2.due.compareTo(b.$2.due));
+        return Pg(
+          'لوحة التحصيل',
+          [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(24)),
+              child: DefaultTextStyle(
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('المستحق هذا الشهر', style: TextStyle(fontSize: 14)),
+                  Text(money(tot), style: bd.copyWith(fontSize: 30, color: Colors.white)),
+                  const SizedBox(height: 12),
+                  ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: pct, minHeight: 8, backgroundColor: Colors.white24, color: Colors.white)),
+                  const SizedBox(height: 8),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('تم تحصيل ${(pct * 100).round()}٪'), Text('متبقٍ ${money(tot - got)}')]),
+                ]),
               ),
-            const SizedBox(height: 12),
+            ),
+            const SizedBox(height: 14),
             Row(children: [
-              Expanded(child: OutlinedButton.icon(onPressed: () => whatsapp(context, c.phone, reminderText(c)), icon: const Icon(Icons.chat_rounded), label: const Text('تذكير واتساب'))),
-              const SizedBox(width: 10),
-              Expanded(child: OutlinedButton.icon(onPressed: () => printContract(context, c), icon: const Icon(Icons.print_rounded), label: const Text('طباعة العقد'))),
+              stat('${un.where((e) => e.$2.lateDays > 0).length}', 'أقساط متأخرة', warn: true),
+              stat('${un.where((e) => e.$2.due == t).length}', 'تستحق اليوم'),
+              stat('${db.cons.where((k) => k.st != 2).length}', 'عقد نشط'),
             ]),
-          ]),
-        ),
-      );
+            const SizedBox(height: 16),
+            hd('الأقساط القادمة'),
+            if (un.isEmpty) empty('لا توجد أقساط مستحقة.\nأضف عقدًا جديدًا من الزر بالأسفل.'),
+            for (final (k, i) in nxt.take(5)) instItem(c, k, i),
+          ],
+          acts: [IconButton(tooltip: 'حاسبة الأقساط', onPressed: () => go(c, const Calc()), icon: const Icon(Icons.calculate_outlined))],
+          fab: FloatingActionButton.extended(backgroundColor: ink, foregroundColor: Colors.white, onPressed: () => go(c, const NewContract()), icon: const Icon(Icons.add), label: const Text('عقد جديد')),
+        );
+      });
+}
 
-  Widget _step(BuildContext context, int i) {
-    final paid = i < c.paid, late = i == c.paid && c.late;
-    final col = paid ? teal : (late ? const Color(0xFFB45309) : mute);
-    return IntrinsicHeight(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Column(children: [
-          Container(
-            width: 34, height: 34,
-            decoration: BoxDecoration(color: col.withAlpha(32), shape: BoxShape.circle),
-            child: Icon(paid ? Icons.check_rounded : (late ? Icons.priority_high_rounded : Icons.schedule_rounded), color: col, size: 20),
-          ),
-          if (i < c.months - 1) Expanded(child: Container(width: 2, color: col.withAlpha(60))),
-        ]),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: paid ? () => open(context, ReceiptPage(c, c.payments[i])) : null,
-              child: box(Row(children: [
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('القسط ${i + 1}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                  Text('الاستحقاق: ${dateStr(c.dueOf(i))}', style: const TextStyle(fontSize: 12, color: mute)),
-                ])),
-                StatusChip(paid ? 'مدفوع' : (late ? 'متأخر' : 'قادم')),
-              ]), pad: const EdgeInsets.all(12)),
+// ───────── العقود ─────────
+class ContractsScr extends StatefulWidget {
+  const ContractsScr({super.key});
+  @override
+  State<ContractsScr> createState() => _CsS();
+}
+
+class _CsS extends State<ContractsScr> {
+  int f = 0;
+  String q = '';
+  @override
+  Widget build(BuildContext c) => live(() {
+        final list = db.cons.where((k) => (f == 0 || k.st == f - 1) && ('${k.id}${db.cust(k.cid)?.name}${k.item}').contains(q.trim())).toList();
+        return Pg('العقود', [
+          fld('ابحث برقم العقد أو اسم العميل', f: (v) => setState(() => q = v)),
+          seg(['الكل', 'نشط', 'متأخر', 'مكتمل'], f, (v) => setState(() => f = v)),
+          if (list.isEmpty) empty('لا توجد عقود'),
+          for (final k in list)
+            Item(ini(db.cust(k.cid)?.name ?? ''), '#${k.id} · ${db.cust(k.cid)?.name}', '${k.item} · ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
+        ]);
+      });
+}
+
+// ───────── تفاصيل العقد ─────────
+Future<void> payFlow(BuildContext c, Contract k) async {
+  final nx = k.next;
+  if (nx == null) return;
+  final fee = nx.lateDays > db.gi('grace') ? db.gn('fee') : 0.0;
+  final m = await pickMethod(c, nx.amt + fee, fee);
+  if (m == null) return;
+  final i = db.pay(k, m)!;
+  if (c.mounted) go(c, Receipt(k.id, k.insts.indexOf(i)));
+}
+
+class ContractDetail extends StatelessWidget {
+  final String id;
+  const ContractDetail(this.id, {super.key});
+  @override
+  Widget build(BuildContext c) => live(() {
+        final k = db.con(id), cu = k == null ? null : db.cust(k.cid);
+        if (k == null || cu == null) return const Pg('عقد', back: true, [Text('العقد غير موجود')]);
+        final nx = k.next;
+        return Pg('عقد #${k.id}', back: true, [
+          Box(Column(children: [
+            Row(children: [
+              CircleAvatar(radius: 24, backgroundColor: const Color(0xFFE3F1EA), child: Text(ini(cu.name), style: bd.copyWith(color: okFg))),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(cu.name, style: bd), Text(k.item, style: mu), Text('تاريخ العقد: ${dstr(k.date)}', style: mu)])),
+              Pill(sl[k.st], sk[k.st]),
+            ]),
+            const SizedBox(height: 14),
+            Row(children: [
+              for (var i = 0; i < k.insts.length; i++)
+                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? green : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFDDE1DB)), borderRadius: BorderRadius.circular(4)))),
+            ]),
+            const SizedBox(height: 8),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('سُدّد ${money(k.insts.where((i) => i.isPaid).fold(0.0, (s, i) => s + i.amt))}', style: mu), Text('المتبقي ${money(k.remaining)}', style: mu)]),
+          ])),
+          two(btn('تسجيل دفعة', nx == null ? null : () => payFlow(c, k)),
+              btn('إرسال تذكير', nx == null ? null : () => openWa(cu.phone, 'السلام عليكم ${cu.name}، تذكير بقسط ${money(nx.amt)} من العقد #${k.id} المستحق في ${dstr(nx.due)}. شكرًا لكم.'), outline: true)),
+          btn('طباعة العقد PDF', () => printDoc('contract-${k.id}.pdf', 'عقد بيع بالأقساط رقم ${k.id}', [
+                ['التاريخ', dstr(k.date)], ['العميل', cu.name], ['هاتف العميل', cu.phone], ['السلعة', k.item],
+                ['السعر الإجمالي', money(k.price)], ['الدفعة المقدمة', money(k.down)], ['نسبة الربح', '${nf(k.markup)}٪'],
+                ['عدد الأقساط', '${k.insts.length}'],
+              ], head: ['م', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true),
+          const SizedBox(height: 10),
+          btn('سداد مبكر / جدولة', nx == null ? null : () => go(c, Settlement(k.id)), dark: true),
+          const SizedBox(height: 16),
+          hd('جدول الأقساط'),
+          for (var n = 0; n < k.insts.length; n++)
+            Item('${n + 1}', 'القسط ${n + 1}', dstr(k.insts[n].due), money(k.insts[n].amt), k.insts[n].isPaid ? 'مدفوع' : (k.insts[n].lateDays > 0 ? 'متأخر' : 'قادم'), k.insts[n].isPaid ? K.ok : (k.insts[n].lateDays > 0 ? K.late : K.neu),
+                onTap: k.insts[n].isPaid ? () => go(c, Receipt(k.id, n)) : null),
+        ]);
+      });
+}
+
+// ───────── عقد جديد ─────────
+class NewContract extends StatefulWidget {
+  final double price, down, markup;
+  final int n;
+  final Cust? cust; // عند فتحها من ملف عميل موجود
+  const NewContract({this.price = 0, this.down = 0, this.markup = 0, this.n = 10, this.cust, super.key});
+  @override
+  State<NewContract> createState() => _NcS();
+}
+
+class _NcS extends State<NewContract> {
+  static const ns = [6, 10, 12, 24];
+  late final name = TextEditingController(text: widget.cust?.name), phone = TextEditingController(text: widget.cust?.phone), item = TextEditingController();
+  late final price = TextEditingController(text: widget.price == 0 ? '' : widget.price.round().toString());
+  late final down = TextEditingController(text: widget.down == 0 ? '' : widget.down.round().toString());
+  late final mk = TextEditingController(text: nf(widget.markup));
+  late int ni = ns.contains(widget.n) ? ns.indexOf(widget.n) : 1;
+  DateTime date = today();
+
+  bool old = false; // وضع تسجيل عقد قديم (الحقل مغلق في العقود الجديدة)
+  Future<void> pickDate() async {
+    if (!old) {
+      final ok = await showDialog<bool>(
+              context: context,
+              builder: (d) => AlertDialog(
+                    title: const Text('تنبيه'),
+                    content: const Text('تغيير تاريخ العقد لتسجيل عقد قديم فقط. العقد الجديد يُسجَّل بتاريخ اليوم تلقائيًا.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')),
+                      TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('تسجيل عقد قديم')),
+                    ],
+                  )) ??
+          false;
+      if (!ok || !mounted) return;
+    }
+    final d = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2015), lastDate: today());
+    if (d != null) {
+      setState(() {
+        date = d;
+        old = true;
+      });
+    }
+  }
+
+  void rf(String _) => setState(() {});
+
+  String _auto = ''; // آخر هاتف عُبّئ تلقائيًا
+  void onName(String _) {
+    final x = db.byName(name.text);
+    if (x != null) {
+      phone.text = x.phone;
+      _auto = x.phone;
+    } else if (_auto.isNotEmpty && phone.text == _auto) {
+      phone.clear();
+      _auto = '';
+    }
+    setState(() {});
+  }
+  @override
+  Widget build(BuildContext c) {
+    final p = pv(price.text).toDouble(), d = pv(down.text).toDouble(), m = pv(mk.text).toDouble();
+    final monthly = p > d ? (p - d) * (1 + m / 100) / ns[ni] : 0.0;
+    return Pg('عقد تقسيط جديد', back: true, [
+      fld('اسم العميل', c: name, f: onName),
+      if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا الاسم موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
+      fld('هاتف العميل', c: phone, num: true),
+      fld('السلعة', c: item),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: InkWell(
+          onTap: pickDate,
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'تاريخ العقد',
+              filled: true,
+              fillColor: old ? Colors.white : const Color(0xFFECEEEA),
+              suffixIcon: Icon(old ? Icons.calendar_today_outlined : Icons.lock_outline),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
             ),
+            child: Text(dstr(date), style: TextStyle(color: old ? ink : muted)),
           ),
         ),
-      ]),
-    );
-  }
-}
-
-// ---------- إيصال الدفع ----------
-class ReceiptPage extends StatelessWidget {
-  const ReceiptPage(this.c, this.p, {super.key});
-  final Contract c;
-  final Payment p;
-
-  Widget row(String a, String b) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(a, style: const TextStyle(color: mute)), Text(b, style: const TextStyle(fontWeight: FontWeight.w800))]),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final n = c.payments.indexOf(p) + 1;
-    final left = c.monthly * (c.months - n);
-    final no = p.no.toString().padLeft(4, '0');
-    final rows = [['العميل', c.customer], ['السلعة', '${c.item} · القسط $n'], ['تاريخ الدفع', dateStr(p.date)], ['المتبقي بعد الدفعة', cur(left)], ['رقم الإيصال', no]];
-    return Scaffold(
-      appBar: AppBar(title: const Text('إيصال الدفع', style: TextStyle(fontWeight: FontWeight.w800))),
-      body: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 40), children: [
-        Reveal(0, Column(children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 26),
-            decoration: heroGrad.copyWith(borderRadius: const BorderRadius.vertical(top: Radius.circular(28))),
-            child: Column(children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0, end: 1),
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.elasticOut,
-                builder: (_, v, ch) => Transform.scale(scale: v, child: ch),
-                child: const CircleAvatar(radius: 30, backgroundColor: Colors.white, child: Icon(Icons.check_rounded, color: teal, size: 34)),
-              ),
-              const SizedBox(height: 12),
-              const Text('تم استلام الدفعة', style: TextStyle(color: Color(0xFFCFE9E4), fontWeight: FontWeight.w700)),
-              Text(cur(p.amount), style: const TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w800)),
-            ]),
-          ),
-          Builder(builder: (ctx) {
-            final d = Theme.of(ctx).brightness == Brightness.dark;
-            return Container(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              decoration: BoxDecoration(color: d ? const Color(0xFF16302C) : Colors.white, borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28))),
-              child: Column(children: [
-                Row(children: List.generate(26, (_) => Expanded(child: Container(height: 1.5, margin: const EdgeInsets.symmetric(horizontal: 2), color: mute.withAlpha(90))))),
-                const SizedBox(height: 8),
-                for (final r in rows) row(r[0], r[1]),
-              ]),
-            );
-          }),
+      ),
+      if (old) Align(alignment: AlignmentDirectional.centerStart, child: TextButton(onPressed: () => setState(() { date = today(); old = false; }), child: const Text('إلغاء التاريخ القديم (عقد جديد)'))),
+      if (date.isBefore(today())) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('عقد بتاريخ سابق: الأقساط التي حلّ موعدها قبل اليوم ستظهر متأخرة', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
+      Row(children: [Expanded(child: fld('السعر الإجمالي', c: price, num: true, f: rf)), const SizedBox(width: 10), Expanded(child: fld('الدفعة المقدمة', c: down, num: true, f: rf))]),
+      fld('نسبة الربح ٪ على المبلغ الممول', c: mk, num: true, f: rf),
+      const Text('عدد الأقساط', style: mu),
+      const SizedBox(height: 6),
+      seg([for (final n in ns) '$n'], ni, (v) => setState(() => ni = v)),
+      Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(color: ink, borderRadius: BorderRadius.circular(20)),
+        child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 13), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('القسط الشهري'),
+          Text(money(monthly), style: bd.copyWith(fontSize: 30, color: Colors.white)),
+          Text('أول استحقاق: ${dstr(addMonths(date, 1))}'),
         ])),
-        const SizedBox(height: 20),
-        Row(children: [
-          Expanded(child: OutlinedButton.icon(
-            onPressed: () => shareText('${app.store.isEmpty ? '' : '${app.store}\n'}إيصال رقم $no\nالعميل: ${c.customer}\nالسلعة: ${c.item} (القسط $n)\nالمبلغ: ${cur(p.amount)}\nالتاريخ: ${dateStr(p.date)}\nالمتبقي: ${cur(left)}'),
-            icon: const Icon(Icons.ios_share_rounded), label: const Text('مشاركة'),
-          )),
-          const SizedBox(width: 10),
-          Expanded(child: OutlinedButton.icon(
-            onPressed: () => printDoc(context, 'إيصال-$no', [
-              pHead('إيصال استلام دفعة'), pRow('رقم الإيصال', no), for (final r in rows.take(4)) pRow(r[0], r[1]), pRow('المبلغ المستلم', cur(p.amount)),
-            ], fmt: PdfPageFormat.a5),
-            icon: const Icon(Icons.print_rounded), label: const Text('طباعة PDF'),
-          )),
-        ]),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: () => Navigator.popUntil(context, (r) => r.isFirst), child: const Text('تم')),
-      ]),
-    );
+      ),
+      const SizedBox(height: 16),
+      btn('إنشاء العقد', () async {
+        if (name.text.trim().isEmpty || phone.text.trim().isEmpty || item.text.trim().isEmpty) return sb(c, 'أكمل بيانات العميل والسلعة');
+        if (p <= 0 || d < 0 || d >= p) return sb(c, 'تحقق من السعر والدفعة المقدمة');
+        if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) {
+          final use = await showDialog<bool>(
+                  context: c,
+                  builder: (d) => AlertDialog(
+                        title: const Text('تنبيه'),
+                        content: const Text('هذا الاسم موجود مسبقًا. سيُضاف العقد الجديد إلى ملف العميل نفسه.'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تعديل الاسم')),
+                          TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('إضافة عقد للعميل')),
+                        ],
+                      )) ??
+              false;
+          if (!use || !c.mounted) return;
+        }
+        final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni], date: date);
+        Navigator.pushReplacement(c, MaterialPageRoute(builder: (_) => ContractDetail(k.id)));
+      }),
+    ]);
   }
 }
 
-// ---------- الإعدادات ----------
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
-
-  Widget tile(IconData i, String t, String v, VoidCallback on) => ListTile(
-        leading: ibox(i, teal),
-        title: Text(t, style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: v.isEmpty ? null : Text(v, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: const Icon(Icons.chevron_left_rounded),
-        onTap: on,
-      );
-
-  Widget sw(IconData i, String t, bool v, ValueChanged<bool> on) => SwitchListTile(
-        secondary: ibox(i, teal),
-        title: Text(t, style: const TextStyle(fontWeight: FontWeight.w700)),
-        value: v,
-        onChanged: on,
-      );
-
+// ───────── الحاسبة ─────────
+class Calc extends StatefulWidget {
+  const Calc({super.key});
   @override
-  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 40), children: [
-        title('الإعدادات'),
-        section('المتجر'),
-        box(Column(children: [
-          tile(Icons.storefront_rounded, 'اسم المتجر', app.store, () async { final v = await askText(context, 'اسم المتجر', app.store); if (v != null) { app.store = v; app.save(); } }),
-          tile(Icons.phone_rounded, 'رقم هاتف المتجر', app.phone, () async { final v = await askText(context, 'رقم الهاتف', app.phone); if (v != null) { app.phone = v; app.save(); } }),
-          tile(Icons.attach_money_rounded, 'العملة', app.currency, () async { final v = await askText(context, 'العملة (مثال: ج.س)', app.currency); if (v != null) { app.currency = v; app.save(); } }),
-        ]), pad: EdgeInsets.zero),
-        section('التذكيرات والمظهر'),
-        box(Column(children: [
-          tile(Icons.chat_rounded, 'نص رسالة التذكير', app.msg, () async {
-            final v = await askText(context, 'المتغيرات: {name} {item} {n} {amount} {date}', app.msg, lines: 4);
-            if (v != null && v.isNotEmpty) { app.msg = v; app.save(); }
-          }),
-          sw(Icons.notifications_active_rounded, 'تنبيه الأقساط المتأخرة', app.alertLate, (v) { app.alertLate = v; app.save(); }),
-          sw(Icons.dark_mode_rounded, 'الوضع الداكن', app.dark, (v) { app.dark = v; app.save(); }),
-        ]), pad: EdgeInsets.zero),
-        section('البيانات'),
-        box(Column(children: [
-          tile(Icons.cloud_upload_outlined, 'نسخ احتياطي', 'مشاركة نسخة من بياناتك', () => shareText(app.export(), subject: 'نسخة احتياطية')),
-          tile(Icons.settings_backup_restore_rounded, 'استعادة نسخة', 'الصق النسخة الاحتياطية', () async {
-            final v = await askText(context, 'الصق النسخة هنا', '', lines: 5);
-            if (v == null || v.isEmpty || !context.mounted) return;
-            snack(context, app.restore(v) ? 'تمت الاستعادة' : 'النسخة غير صالحة');
-          }),
-        ]), pad: EdgeInsets.zero),
-        const SizedBox(height: 18),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFB45309), side: const BorderSide(color: Color(0xFFE8B98F))),
-          icon: const Icon(Icons.delete_forever_rounded),
+  State<Calc> createState() => _CalcS();
+}
+
+class _CalcS extends State<Calc> {
+  final price = TextEditingController(text: '1200000');
+  double down = .25, markup = 10;
+  int ni = 2;
+  static const ns = [6, 10, 12, 24];
+  @override
+  Widget build(BuildContext c) {
+    final p = pv(price.text).toDouble(), fin = p * (1 - down), profit = fin * markup / 100, total = fin + profit, monthly = total / ns[ni];
+    return Pg('حاسبة الأقساط', back: true, [
+      fld('سعر السلعة', c: price, num: true, f: (_) => setState(() {})),
+      Text('الدفعة المقدمة: ${money(p * down)} · ${(down * 100).round()}٪', style: bd),
+      Slider(value: down, min: 0, max: .8, divisions: 16, onChanged: (v) => setState(() => down = v)),
+      Text('نسبة الربح على المبلغ الممول: ${markup.round()}٪', style: bd),
+      Slider(value: markup, min: 0, max: 30, divisions: 30, onChanged: (v) => setState(() => markup = v)),
+      const Text('عدد الأقساط', style: mu),
+      const SizedBox(height: 6),
+      seg([for (final n in ns) '$n'], ni, (v) => setState(() => ni = v)),
+      Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(22)),
+        child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('القسط الشهري'),
+          Text(money(monthly), style: bd.copyWith(fontSize: 32, color: Colors.white)),
+          const SizedBox(height: 8),
+          for (final r in [['المبلغ الممول', fin], ['الربح', profit], ['إجمالي السداد بعد المقدمة', total]])
+            Padding(padding: const EdgeInsets.symmetric(vertical: 5), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(r[0] as String), Text(money(r[1] as num), style: bd)])),
+        ])),
+      ),
+      const SizedBox(height: 14),
+      two(btn('مشاركة العرض', () => Clipboard.setData(ClipboardData(text: 'عرض تقسيط: سعر ${money(p)}، مقدمة ${money(p * down)}، ${ns[ni]} قسطًا بقيمة ${money(monthly)} شهريًا.')).then((_) => c.mounted ? sb(c, 'تم نسخ العرض') : null), outline: true),
+          btn('إنشاء عقد', () => go(c, NewContract(price: p, down: p * down, markup: markup, n: ns[ni])), dark: true)),
+    ]);
+  }
+}
+
+// ───────── العملاء ─────────
+class CustomersScr extends StatefulWidget {
+  const CustomersScr({super.key});
+  @override
+  State<CustomersScr> createState() => _CuS();
+}
+
+class _CuS extends State<CustomersScr> {
+  String q = '';
+  @override
+  Widget build(BuildContext c) => live(() {
+        final list = db.custs.where((x) => '${x.name}${x.phone}'.contains(q.trim())).toList();
+        return Pg('العملاء', [
+          fld('ابحث بالاسم أو رقم الهاتف', f: (v) => setState(() => q = v)),
+          if (list.isEmpty) empty('لا يوجد عملاء'),
+          for (final x in list) () {
+            final r = rate(x);
+            return Item(ini(x.name), x.name, '${consOf(x).length} عقد · ${x.phone}', money(remOf(x)), r.$1, r.$2, onTap: () => go(c, CustomerProfile(x.id)));
+          }(),
+        ], fab: FloatingActionButton.extended(
+          backgroundColor: ink, foregroundColor: Colors.white, icon: const Icon(Icons.person_add_alt), label: const Text('عميل جديد'),
           onPressed: () async {
-            if (await confirm(context, 'مسح كل البيانات؟', 'سيتم حذف جميع العقود والدفعات نهائياً.')) { app.contracts.clear(); app.receiptNo = 0; app.save(); }
+            final n = await ask(c, 'اسم العميل');
+            if (n == null || n.trim().isEmpty || !c.mounted) return;
+            if (db.byName(n) != null) return alert(c, 'هذا الاسم موجود مسبقًا');
+            final p = await ask(c, 'رقم الهاتف', num: true);
+            if (p != null && p.trim().isNotEmpty) db.addCust(n, p);
           },
-          label: const Text('مسح كل البيانات'),
-        ),
+        ));
+      });
+}
+
+class CustomerProfile extends StatelessWidget {
+  final String id;
+  const CustomerProfile(this.id, {super.key});
+  @override
+  Widget build(BuildContext c) => live(() {
+        final x = db.cust(id);
+        if (x == null) return const Pg('ملف العميل', back: true, [Text('العميل غير موجود')]);
+        final ks = consOf(x), r = rate(x);
+        return Pg('ملف العميل', back: true, [
+          Row(children: [
+            CircleAvatar(radius: 30, backgroundColor: green, child: Text(ini(x.name), style: bd.copyWith(color: Colors.white, fontSize: 22))),
+            const SizedBox(width: 14),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(x.name, style: bd.copyWith(fontSize: 18)), Text(x.phone, style: mu)]),
+          ]),
+          const SizedBox(height: 14),
+          Row(children: [stat('${ks.where((k) => k.st != 2).length}', 'عقود نشطة'), stat(money(remOf(x)), 'المتبقي'), stat('${r.$3}٪', 'نسبة الالتزام', warn: r.$2 == K.late)]),
+          two(btn('اتصال', () => callPhone(x.phone), outline: true), btn('واتساب', () => openWa(x.phone, 'السلام عليكم ${x.name}'))),
+        btn('عقد جديد لهذا العميل', () => go(c, NewContract(cust: x)), dark: true),
+          hd('العقود'),
+          if (ks.isEmpty) empty('لا توجد عقود لهذا العميل'),
+          for (final k in ks) Item('${ks.indexOf(k) + 1}', '#${k.id} · ${k.item}', 'قسط ${k.paidCount} من ${k.insts.length}', money(k.remaining), sl[k.st], sk[k.st], onTap: () => go(c, ContractDetail(k.id))),
+        ]);
+      });
+}
+
+// ───────── التقارير ─────────
+class ReportsScr extends StatefulWidget {
+  const ReportsScr({super.key});
+  @override
+  State<ReportsScr> createState() => _RpS();
+}
+
+class _RpS extends State<ReportsScr> {
+  int p = 1;
+  @override
+  Widget build(BuildContext c) => live(() {
+        final t = today(), all = db.all;
+        final from = p == 0 ? t.subtract(const Duration(days: 6)) : (p == 1 ? DateTime(t.year, t.month, 1) : DateTime(t.year, 1, 1));
+        final paid = all.where((e) => e.$2.isPaid && !e.$2.paid!.isBefore(from)).toList();
+        final coll = paid.fold(0.0, (s, e) => s + e.$2.amt);
+        final profit = paid.fold(0.0, (s, e) => s + e.$2.amt * e.$1.markup / (100 + e.$1.markup));
+        final late = all.where((e) => e.$2.lateDays > 0).toList();
+        final bars = [for (var j = 5; j >= 0; j--) addMonths(DateTime(t.year, t.month, 1), -j)];
+        final vals = [for (final m in bars) all.where((e) => e.$2.isPaid && e.$2.paid!.year == m.year && e.$2.paid!.month == m.month).fold(0.0, (s, e) => s + e.$2.amt)];
+        final mx = vals.fold(0.0, (a, b) => a > b ? a : b);
+        final byC = <String, double>{};
+        for (final e in late) { byC[e.$1.cid] = (byC[e.$1.cid] ?? 0) + e.$2.amt; }
+        final top = byC.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        return Pg('التقارير', [
+          seg(['آخر 7 أيام', 'هذا الشهر', 'هذه السنة'], p, (v) => setState(() => p = v)),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(22)),
+            child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 13), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('إجمالي التحصيل'),
+              Text(money(coll), style: bd.copyWith(fontSize: 28, color: Colors.white)),
+            ])),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [stat(money(profit), 'الأرباح'), stat(money(late.fold(0.0, (s, e) => s + e.$2.amt)), 'المتأخرات', warn: true)]),
+          const SizedBox(height: 14),
+          Box(SizedBox(height: 150, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            for (var i = 0; i < 6; i++)
+              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? green : const Color(0xFFBFD9CD), borderRadius: BorderRadius.circular(6))),
+                const SizedBox(height: 6),
+                Text(months[bars[i].month - 1], style: const TextStyle(fontSize: 11, color: muted)),
+              ])),
+          ]))),
+          hd('أكثر العملاء تأخرًا'),
+          if (top.isEmpty) empty('لا توجد متأخرات 👌'),
+          for (final e in top.take(3)) () {
+            final x = db.cust(e.key);
+            return Item(ini(x?.name ?? ''), x?.name ?? '', '${late.where((l) => l.$1.cid == e.key).length} أقساط متأخرة', money(e.value), 'متأخر', K.late, onTap: x == null ? null : () => go(c, CustomerProfile(x.id)));
+          }(),
+        ]);
+      });
+}
+
+// ───────── الإيصال ─────────
+class Receipt extends StatelessWidget {
+  final String id;
+  final int idx;
+  const Receipt(this.id, this.idx, {super.key});
+  @override
+  Widget build(BuildContext c) => live(() {
+        final k = db.con(id), cu = k == null ? null : db.cust(k.cid);
+        if (k == null || cu == null || idx >= k.insts.length || !k.insts[idx].isPaid) return const Pg('إيصال', back: true, [Text('الإيصال غير موجود')]);
+        final i = k.insts[idx], tot = i.amt + i.fee;
+        final rows = [
+          ['رقم الإيصال', i.rcpt ?? '-'], ['العميل', cu.name], ['العقد', '#${k.id} · القسط ${idx + 1} من ${k.insts.length}'],
+          ['التاريخ', dstr(i.paid!)], ['طريقة الدفع', i.method ?? '-'], if (i.fee > 0) ['غرامة التأخير', money(i.fee)], ['المتبقي بعد الدفعة', money(i.left)],
+        ];
+        return Pg('إيصال الدفعة', back: true, [
+          Box(Column(children: [
+            const CircleAvatar(radius: 28, backgroundColor: Color(0xFFE3F1EA), child: Icon(Icons.check, color: okFg, size: 30)),
+            const SizedBox(height: 10),
+            const Text('تم تسجيل الدفعة', style: mu),
+            Text(money(tot), style: bd.copyWith(fontSize: 30)),
+            const SizedBox(height: 10),
+            for (var n = 0; n < rows.length; n++) kv(rows[n][0], rows[n][1], first: n == 0),
+          ]), pad: 20),
+          two(btn('واتساب', () => openWa(cu.phone, 'إيصال ${i.rcpt}: تم استلام ${money(tot)} من ${cu.name} للعقد #${k.id}. المتبقي ${money(i.left)}.'), outline: true),
+              btn('طباعة PDF', () => printDoc('receipt-${i.rcpt}.pdf', 'إيصال استلام', [['رقم الإيصال', i.rcpt ?? '-'], ['العميل', cu.name], ['رقم العقد', k.id], ['القسط', '${idx + 1} من ${k.insts.length}'], ['التاريخ', dstr(i.paid!)], ['طريقة الدفع', i.method ?? '-'], if (i.fee > 0) ['غرامة التأخير', money(i.fee)], ['المتبقي بعد الدفعة', money(i.left)]], big: ['المبلغ المستلم', money(tot)]), outline: true)),
+          btn('تم', () => Navigator.pop(c), dark: true),
+        ]);
+      });
+}
+
+// ───────── سداد مبكر وجدولة ─────────
+class Settlement extends StatefulWidget {
+  final String id;
+  const Settlement(this.id, {super.key});
+  @override
+  State<Settlement> createState() => _StS();
+}
+
+class _StS extends State<Settlement> {
+  int t = 0;
+  double months = 10;
+  @override
+  Widget build(BuildContext c) => live(() {
+        final k = db.con(widget.id);
+        if (k == null || k.next == null) return const Pg('سداد مبكر وجدولة', back: true, [Text('لا توجد أقساط متبقية لهذا العقد')]);
+        final rem = k.remaining, disc = db.gn('disc');
+        return Pg('سداد مبكر وجدولة', back: true, [
+          seg(['سداد مبكر', 'تأجيل قسط', 'إعادة جدولة'], t, (v) => setState(() => t = v)),
+          if (t == 0) ...[
+            Box(Column(children: [kv('المتبقي على العقد', money(rem), first: true), kv('خصم السداد المبكر ${nf(disc)}٪', '− ${money(rem - db.settleDue(k))}', c: okFg), kv('المبلغ المستحق الآن', money(db.settleDue(k)))])),
+            btn('تسوية العقد', () async {
+              if (!await sure(c, 'تسوية العقد بمبلغ ${money(db.settleDue(k))}؟')) return;
+              db.settle(k);
+              if (c.mounted) { Navigator.pop(c); sb(c, 'تمت تسوية العقد'); }
+            }),
+            const SizedBox(height: 10),
+            btn('سداد جزئي', () async {
+              final v = await ask(c, 'المبلغ المدفوع الآن', num: true);
+              final a = pv(v ?? '').toDouble();
+              if (a <= 0) return;
+              if (a >= rem) {
+                if (c.mounted) sb(c, 'المبلغ يغطي كامل المتبقي، استخدم «تسوية العقد»');
+                return;
+              }
+              if (!c.mounted) return;
+              final m = await pickMethod(c, a, 0);
+              if (m == null) return;
+              final i = db.payPartial(k, a, m);
+              if (i != null && c.mounted) go(c, Receipt(k.id, k.insts.indexOf(i)));
+            }, outline: true),
+          ],
+          if (t == 1) ...[
+            Box(Text('سيُنقل القسط القادم (${dstr(k.next!.due)}) إلى نهاية الجدول، وتمتد مدة العقد شهرًا.')),
+            btn('تأكيد التأجيل', () { db.postpone(k); sb(c, 'تم تأجيل القسط'); }),
+          ],
+          if (t == 2)
+            Box(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('مدّ المتبقي ${money(rem)} على ${months.round()} شهرًا', style: bd),
+              Slider(value: months, min: 1, max: 24, divisions: 23, onChanged: (v) => setState(() => months = v)),
+              Text('القسط الجديد: ${money(rem / months.round())}', style: bd.copyWith(color: green, fontSize: 18)),
+              const SizedBox(height: 12),
+              btn('تعديل الجدول', () { db.resched(k, months.round()); sb(c, 'تم تعديل الجدول'); }, outline: true),
+            ])),
+        ]);
+      });
+}
+
+// ───────── الإعدادات ─────────
+class SettingsScr extends StatelessWidget {
+  const SettingsScr({super.key});
+  Widget row(String l, String v, VoidCallback f) => ListTile(title: Text(l), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(v, style: mu), const Icon(Icons.chevron_left, color: muted)]), onTap: f);
+  Widget sec(String t, List<Widget> c) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(4, 14, 4, 8), child: Text(t, style: bd.copyWith(fontSize: 13, color: muted))),
+        Box(Column(children: c), pad: 0),
       ]);
+  Widget numRow(BuildContext c, String l, String k, {bool isMoney = false}) =>
+      row(l, isMoney ? money(db.gn(k)) : nf(db.gn(k)), () async {
+        final v = await ask(c, l, init: nf(db.gn(k)), num: true);
+        if (v != null && v.trim().isNotEmpty) db.setv(k, pv(v));
+      });
+  @override
+  Widget build(BuildContext c) => live(() => Pg('الإعدادات', [
+        sec('المنشأة', [
+          row('اسم المنشأة (يظهر في المستندات)', db.gs('company'), () async {
+            final v = await ask(c, 'اسم المنشأة', init: db.gs('company'));
+            if (v != null && v.trim().isNotEmpty) db.setv('company', v.trim());
+          }),
+        ]),
+        sec('التحصيل', [
+          numRow(c, 'فترة السماح (أيام)', 'grace'),
+          numRow(c, 'غرامة التأخير', 'fee', isMoney: true),
+          numRow(c, 'خصم السداد المبكر ٪', 'disc'),
+          row('رمز الدولة للواتساب', '+${db.gs('cc')}', () async {
+            final v = await ask(c, 'رمز الدولة (مثال: 249)', init: db.gs('cc'), num: true);
+            if (v != null && v.trim().isNotEmpty) db.setv('cc', v.trim());
+          }),
+        ]),
+        sec('البيانات', [
+          row('نسخ احتياطي إلى الجهاز', '', () async {
+            if (db.custs.isEmpty && db.cons.isEmpty) return alert(c, 'لا توجد بيانات للنسخ الاحتياطي');
+            final m = await backupFile();
+            if (c.mounted) sb(c, m);
+          }),
+          row('استعادة من ملف في الجهاز', '', () async {
+            if (!await sure(c, 'ستُستبدل البيانات الحالية بالنسخة المختارة. متابعة؟')) return;
+            final m = await restoreFile();
+            if (c.mounted) sb(c, m);
+          }),
+          row('حذف كل البيانات', '', () async {
+            if (await sure(c, 'حذف كل العملاء والعقود نهائيًا؟')) db.reset();
+          }),
+        ]),
+      ]));
 }
