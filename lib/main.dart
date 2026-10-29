@@ -29,6 +29,7 @@ String normName(String s) => s
     .trim()
     .toLowerCase();
 bool sameName(String a, String b) => normName(a) == normName(b);
+Future<void> shareText(String text, {String? subject}) => SharePlus.instance.share(ShareParams(text: text, subject: subject));
 void snack(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
 
 // ---------- النموذج ----------
@@ -964,7 +965,7 @@ class ReceiptPage extends StatelessWidget {
         const SizedBox(height: 20),
         Row(children: [
           Expanded(child: OutlinedButton.icon(
-            onPressed: () => Share.share('${app.store.isEmpty ? '' : '${app.store}\n'}إيصال رقم $no\nالعميل: ${c.customer}\nالسلعة: ${c.item} (القسط $n)\nالمبلغ: ${cur(p.amount)}\nالتاريخ: ${dateStr(p.date)}\nالمتبقي: ${cur(left)}'),
+            onPressed: () => shareText('${app.store.isEmpty ? '' : '${app.store}\n'}إيصال رقم $no\nالعميل: ${c.customer}\nالسلعة: ${c.item} (القسط $n)\nالمبلغ: ${cur(p.amount)}\nالتاريخ: ${dateStr(p.date)}\nالمتبقي: ${cur(left)}'),
             icon: const Icon(Icons.ios_share_rounded), label: const Text('مشاركة'),
           )),
           const SizedBox(width: 10),
@@ -1021,7 +1022,7 @@ class SettingsPage extends StatelessWidget {
         ]), pad: EdgeInsets.zero),
         section('البيانات'),
         box(Column(children: [
-          tile(Icons.cloud_upload_outlined, 'نسخ احتياطي', 'مشاركة نسخة من بياناتك', () => Share.share(app.export(), subject: 'نسخة احتياطية')),
+          tile(Icons.cloud_upload_outlined, 'نسخ احتياطي', 'مشاركة نسخة من بياناتك', () => shareText(app.export(), subject: 'نسخة احتياطية')),
           tile(Icons.settings_backup_restore_rounded, 'استعادة نسخة', 'الصق النسخة الاحتياطية', () async {
             final v = await askText(context, 'الصق النسخة هنا', '', lines: 5);
             if (v == null || v.isEmpty || !context.mounted) return;
