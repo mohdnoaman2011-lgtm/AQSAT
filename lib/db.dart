@@ -131,9 +131,9 @@ class Db extends ChangeNotifier {
     return c;
   }
 
-  Contract create({required String name, required String phone, required String item, required double price, required double down, required double markup, required int n}) {
+  Contract create({required String name, required String phone, required String item, required double price, required double down, required double markup, required int n, DateTime? date}) {
     final c = byName(name) ?? addCust(name, phone);
-    final a = (price - down) * (1 + markup / 100) / n, t = today();
+    final a = (price - down) * (1 + markup / 100) / n, t = date ?? today();
     final k = Contract(id: '${++seq}', cid: c.id, item: item.trim(), price: price, down: down, markup: markup, date: t, insts: [for (var i = 1; i <= n; i++) Inst(addMonths(t, i), a)]);
     cons.insert(0, k);
     _save();
