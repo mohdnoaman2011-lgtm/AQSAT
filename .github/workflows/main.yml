@@ -16,6 +16,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # يتأكد من رفع مجلد assets قبل البدء (فشل البناء السابق كان بسبب غيابه)
+      - name: Check assets
+        run: |
+          for f in assets/logo.png assets/icon/icon.png assets/icon/icon_fg.png; do
+            [ -f "$f" ] || { echo "::error::الملف $f غير موجود في المستودع. ارفع مجلد assets كاملًا."; exit 1; }
+          done
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
