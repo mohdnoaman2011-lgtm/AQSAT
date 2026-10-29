@@ -439,12 +439,25 @@ class _NcS extends State<NewContract> {
   late int ni = ns.contains(widget.n) ? ns.indexOf(widget.n) : 1;
 
   void rf(String _) => setState(() {});
+
+  String _auto = ''; // آخر هاتف عُبّئ تلقائيًا
+  void onName(String _) {
+    final x = db.byName(name.text);
+    if (x != null) {
+      phone.text = x.phone;
+      _auto = x.phone;
+    } else if (_auto.isNotEmpty && phone.text == _auto) {
+      phone.clear();
+      _auto = '';
+    }
+    setState(() {});
+  }
   @override
   Widget build(BuildContext c) {
     final p = pv(price.text).toDouble(), d = pv(down.text).toDouble(), m = pv(mk.text).toDouble();
     final monthly = p > d ? (p - d) * (1 + m / 100) / ns[ni] : 0.0;
     return Pg('عقد تقسيط جديد', back: true, [
-      fld('اسم العميل', c: name, f: rf),
+      fld('اسم العميل', c: name, f: onName),
       if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا الاسم موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
       fld('هاتف العميل', c: phone, num: true),
       fld('السلعة', c: item),
