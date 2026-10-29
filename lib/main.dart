@@ -398,7 +398,7 @@ class ContractDetail extends StatelessWidget {
             Row(children: [
               CircleAvatar(radius: 24, backgroundColor: const Color(0xFFE3F1EA), child: Text(ini(cu.name), style: bd.copyWith(color: okFg))),
               const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(cu.name, style: bd), Text(k.item, style: mu)])),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(cu.name, style: bd), Text(k.item, style: mu), Text('تاريخ العقد: ${dstr(k.date)}', style: mu)])),
               Pill(sl[k.st], sk[k.st]),
             ]),
             const SizedBox(height: 14),
@@ -444,6 +444,32 @@ class _NcS extends State<NewContract> {
   late final down = TextEditingController(text: widget.down == 0 ? '' : widget.down.round().toString());
   late final mk = TextEditingController(text: nf(widget.markup));
   late int ni = ns.contains(widget.n) ? ns.indexOf(widget.n) : 1;
+  DateTime date = today();
+
+  bool old = false; // وضع تسجيل عقد قديم (الحقل مغلق في العقود الجديدة)
+  Future<void> pickDate() async {
+    if (!old) {
+      final ok = await showDialog<bool>(
+              context: context,
+              builder: (d) => AlertDialog(
+                    title: const Text('تنبيه'),
+                    content: const Text('تغيير تاريخ العقد لتسجيل عقد قديم فقط. العقد الجديد يُسجَّل بتاريخ اليوم تلقائيًا.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')),
+                      TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('تسجيل عقد قديم')),
+                    ],
+                  )) ??
+          false;
+      if (!ok || !mounted) return;
+    }
+    final d = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2015), lastDate: today());
+    if (d != null) {
+      setState(() {
+        date = d;
+        old = true;
+      });
+    }
+  }
 
   void rf(String _) => setState(() {});
 
@@ -468,6 +494,25 @@ class _NcS extends State<NewContract> {
       if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا الاسم موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
       fld('هاتف العميل', c: phone, num: true),
       fld('السلعة', c: item),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: InkWell(
+          onTap: pickDate,
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'تاريخ العقد',
+              filled: true,
+              fillColor: old ? Colors.white : const Color(0xFFECEEEA),
+              suffixIcon: Icon(old ? Icons.calendar_today_outlined : Icons.lock_outline),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
+            ),
+            child: Text(dstr(date), style: TextStyle(color: old ? ink : muted)),
+          ),
+        ),
+      ),
+      if (old) Align(alignment: AlignmentDirectional.centerStart, child: TextButton(onPressed: () => setState(() { date = today(); old = false; }), child: const Text('إلغاء التاريخ القديم (عقد جديد)'))),
+      if (date.isBefore(today())) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('عقد بتاريخ سابق: الأقساط التي حلّ موعدها قبل اليوم ستظهر متأخرة', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
       Row(children: [Expanded(child: fld('السعر الإجمالي', c: price, num: true, f: rf)), const SizedBox(width: 10), Expanded(child: fld('الدفعة المقدمة', c: down, num: true, f: rf))]),
       fld('نسبة الربح ٪ على المبلغ الممول', c: mk, num: true, f: rf),
       const Text('عدد الأقساط', style: mu),
@@ -479,7 +524,7 @@ class _NcS extends State<NewContract> {
         child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 13), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('القسط الشهري'),
           Text(money(monthly), style: bd.copyWith(fontSize: 30, color: Colors.white)),
-          const Text('أول استحقاق بعد شهر من تاريخ العقد'),
+          Text('أول استحقاق: ${dstr(addMonths(date, 1))}'),
         ])),
       ),
       const SizedBox(height: 16),
@@ -500,7 +545,7 @@ class _NcS extends State<NewContract> {
               false;
           if (!use || !c.mounted) return;
         }
-        final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni]);
+        final k = db.create(name: name.text, phone: phone.text, item: item.text, price: p, down: d, markup: m, n: ns[ni], date: date);
         Navigator.pushReplacement(c, MaterialPageRoute(builder: (_) => ContractDetail(k.id)));
       }),
     ]);
