@@ -36,7 +36,51 @@ class App extends StatelessWidget {
           scaffoldBackgroundColor: bg,
           textTheme: GoogleFonts.ibmPlexSansArabicTextTheme().apply(bodyColor: ink, displayColor: ink),
         ),
-        home: const Shell(),
+        home: const Splash(),
+      );
+}
+
+// ───────── شاشة البداية ─────────
+class Splash extends StatefulWidget {
+  const Splash({super.key});
+  @override
+  State<Splash> createState() => _SplashS();
+}
+
+class _SplashS extends State<Splash> {
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(milliseconds: 2200), () {
+      if (!mounted) return;
+      Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 500),
+            pageBuilder: (_, __, ___) => const Shell(),
+            transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+          ));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 900),
+            curve: Curves.easeOut,
+            builder: (_, v, child) => Opacity(opacity: v, child: Transform.scale(scale: .85 + .15 * v, child: child)),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.asset('assets/logo.png', width: 260),
+              const SizedBox(height: 8),
+              const Text('إدارة البيع بالأقساط', style: TextStyle(color: muted, fontSize: 15)),
+              const SizedBox(height: 28),
+              const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 3, color: green)),
+            ]),
+          ),
+        ),
       );
 }
 
