@@ -491,7 +491,7 @@ class _NcS extends State<NewContract> {
     final monthly = p > d ? (p - d) * (1 + m / 100) / ns[ni] : 0.0;
     return Pg('عقد تقسيط جديد', back: true, [
       fld('اسم العميل', c: name, f: onName),
-      if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا الاسم موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
+      if (db.byName(name.text) != null && db.byName(name.text)!.id != widget.cust?.id) const Padding(padding: EdgeInsets.only(bottom: 10), child: Text('هذا العميل موجود مسبقًا، سيُضاف العقد إلى ملف العميل نفسه', style: TextStyle(fontSize: 12, color: Color(0xFF9A3412)))),
       fld('هاتف العميل', c: phone, num: true),
       fld('السلعة', c: item),
       Padding(
@@ -536,7 +536,7 @@ class _NcS extends State<NewContract> {
                   context: c,
                   builder: (d) => AlertDialog(
                         title: const Text('تنبيه'),
-                        content: const Text('هذا الاسم موجود مسبقًا. سيُضاف العقد الجديد إلى ملف العميل نفسه.'),
+                        content: const Text('هذا العميل موجود مسبقًا. سيُضاف العقد الجديد إلى ملف العميل نفسه.'),
                         actions: [
                           TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تعديل الاسم')),
                           TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('إضافة عقد للعميل')),
@@ -618,7 +618,7 @@ class _CuS extends State<CustomersScr> {
           onPressed: () async {
             final n = await ask(c, 'اسم العميل');
             if (n == null || n.trim().isEmpty || !c.mounted) return;
-            if (db.byName(n) != null) return alert(c, 'هذا الاسم موجود مسبقًا');
+            if (db.byName(n) != null) return alert(c, 'هذا العميل موجود مسبقًا');
             final p = await ask(c, 'رقم الهاتف', num: true);
             if (p != null && p.trim().isNotEmpty) db.addCust(n, p);
           },
