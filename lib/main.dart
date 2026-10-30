@@ -5,8 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'db.dart';
 import 'util.dart';
 
-const green = Color(0xFF0F6B4F), ink = Color(0xFF14201C), bg = Color(0xFFF6F7F4);
-const muted = Color(0xFF4B5651), line = Color(0xFFD5DAD4), okFg = Color(0xFF0B5A41);
+// ألوان الشعار: أزرق ملكي → بنفسجي، مع أخضر النجاح
+const brand = Color(0xFF1D4ED8), brand2 = Color(0xFF7C3AED), ink = Color(0xFF0B1F4D), bg = Color(0xFFF5F8FF), tint = Color(0xFFE6ECFF);
+const brandGrad = LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [brand, brand2]);
+const muted = Color(0xFF475569), line = Color(0xFFD6DEEE), okFg = Color(0xFF047857);
 const bd = TextStyle(fontWeight: FontWeight.bold);
 const mu = TextStyle(fontSize: 13, color: muted);
 const sl = ['نشط', 'متأخر', 'مكتمل'];
@@ -39,7 +41,7 @@ class App extends StatelessWidget {
         localizationsDelegates: const [GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate],
         theme: ThemeData(
           useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: green, primary: green),
+          colorScheme: ColorScheme.fromSeed(seedColor: brand, primary: brand),
           scaffoldBackgroundColor: bg,
           textTheme: GoogleFonts.ibmPlexSansArabicTextTheme().apply(bodyColor: ink, displayColor: ink),
         ),
@@ -54,50 +56,83 @@ class Splash extends StatefulWidget {
   State<Splash> createState() => _SplashS();
 }
 
-class _SplashS extends State<Splash> {
+class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
+  late final AnimationController a = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400));
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(milliseconds: 2200), () {
+    a.forward().whenComplete(() {
       if (!mounted) return;
       Navigator.pushReplacement(
           context,
           PageRouteBuilder(
-            transitionDuration: const Duration(milliseconds: 500),
             pageBuilder: (_, __, ___) => const Shell(),
-            transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+            transitionsBuilder: (_, an, __, ch) => FadeTransition(opacity: an, child: ch),
+            transitionDuration: const Duration(milliseconds: 500),
           ));
     });
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 900),
-            curve: Curves.easeOut,
-            builder: (_, v, child) => Opacity(opacity: v, child: Transform.scale(scale: .85 + .15 * v, child: child)),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Image.asset('assets/logo.png', width: 260),
-              const SizedBox(height: 8),
-              const Text('إدارة البيع بالأقساط', style: TextStyle(color: muted, fontSize: 15)),
-              const SizedBox(height: 28),
-              const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 3, color: green)),
+  void dispose() {
+    a.dispose();
+    super.dispose();
+  }
+
+  Animation<double> _iv(double b, double e, [Curve c = Curves.easeOut]) => CurvedAnimation(parent: a, curve: Interval(b, e, curve: c));
+  Widget _blob(double d, Color col) => Container(width: d, height: d, decoration: BoxDecoration(shape: BoxShape.circle, color: col));
+
+  @override
+  Widget build(BuildContext c) {
+    final logo = _iv(0, .35, Curves.easeOutBack), tag = _iv(.3, .55), bar = _iv(.05, 1, Curves.easeInOut);
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.white, Color(0xFFEAF2FF)])),
+        child: Stack(children: [
+          Positioned(top: -90, right: -70, child: _blob(260, const Color(0x1F9333EA))),
+          Positioned(bottom: -110, left: -80, child: _blob(300, const Color(0x1F06B6D4))),
+          SafeArea(
+            child: Column(children: [
+              const Spacer(flex: 5),
+              FadeTransition(opacity: _iv(0, .3), child: ScaleTransition(scale: Tween<double>(begin: .85, end: 1).animate(logo), child: Image.asset('assets/logo.png', width: 270))),
+              const SizedBox(height: 10),
+              FadeTransition(
+                opacity: tag,
+                child: SlideTransition(
+                  position: Tween<Offset>(begin: const Offset(0, .4), end: Offset.zero).animate(tag),
+                  child: Column(children: [
+                    Text('إدارة البيع بالأقساط', style: bd.copyWith(fontSize: 18, color: ink)),
+                    const SizedBox(height: 6),
+                    const Text('عقود · أقساط · تحصيل · تقارير', style: mu),
+                  ]),
+                ),
+              ),
+              const Spacer(flex: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 70),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: AnimatedBuilder(animation: bar, builder: (_, __) => LinearProgressIndicator(value: bar.value, minHeight: 4, backgroundColor: const Color(0xFFD9E3F3), color: brand)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text('الإصدار 1.3.0', style: TextStyle(fontSize: 12, color: muted)),
+              const SizedBox(height: 22),
             ]),
           ),
-        ),
-      );
+        ]),
+      ),
+    );
+  }
 }
 
 // ───────── مكونات مشتركة ─────────
 enum K { ok, late, neu }
 
 const _pc = {
-  K.ok: [Color(0xFFE3F1EA), okFg],
+  K.ok: [Color(0xFFD9F5E8), okFg],
   K.late: [Color(0xFFFDEBDD), Color(0xFF9A3412)],
-  K.neu: [Color(0xFFECEEEA), Color(0xFF3F4A46)],
+  K.neu: [Color(0xFFE7ECF7), Color(0xFF334155)],
 };
 
 Widget live(Widget Function() f) => ListenableBuilder(listenable: db, builder: (_, __) => f());
@@ -140,7 +175,7 @@ class Item extends StatelessWidget {
   @override
   Widget build(BuildContext c) => Box(
         Row(children: [
-          CircleAvatar(radius: 22, backgroundColor: const Color(0xFFE3F1EA), child: Text(av, style: bd.copyWith(color: okFg))),
+          CircleAvatar(radius: 22, backgroundColor: tint, child: Text(av, style: bd.copyWith(color: brand))),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(n, style: bd.copyWith(fontSize: 15)), Text(s, style: mu)])),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(a, style: bd.copyWith(fontSize: 14)), Pill(p, k)]),
@@ -178,15 +213,15 @@ Widget btn(String t, VoidCallback? f, {bool outline = false, bool dark = false})
   final sh = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
   const sz = Size.fromHeight(52);
   return outline
-      ? OutlinedButton(onPressed: f, style: OutlinedButton.styleFrom(minimumSize: sz, shape: sh, foregroundColor: green, backgroundColor: Colors.white, side: const BorderSide(color: green)), child: Text(t, style: bd))
-      : FilledButton(onPressed: f, style: FilledButton.styleFrom(minimumSize: sz, shape: sh, backgroundColor: dark ? ink : green), child: Text(t, style: bd));
+      ? OutlinedButton(onPressed: f, style: OutlinedButton.styleFrom(minimumSize: sz, shape: sh, foregroundColor: brand, backgroundColor: Colors.white, side: const BorderSide(color: brand)), child: Text(t, style: bd))
+      : FilledButton(onPressed: f, style: FilledButton.styleFrom(minimumSize: sz, shape: sh, backgroundColor: dark ? ink : brand), child: Text(t, style: bd));
 }
 
 Widget two(Widget a, Widget b) => Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Row(children: [Expanded(child: a), const SizedBox(width: 10), Expanded(child: b)]));
 
 Widget kv(String l, String v, {Color? c, bool first = false}) => Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFEDEFEB)))),
+      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFE8EDF7)))),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: const TextStyle(color: muted)), Text(v, style: bd.copyWith(color: c))]),
     );
 
@@ -202,7 +237,7 @@ Widget seg(List<String> it, int a, ValueChanged<int> f) => Padding(
               child: Container(
                 height: 42,
                 alignment: Alignment.center,
-                decoration: BoxDecoration(color: i == a ? green : Colors.white, border: i == a ? null : Border.all(color: line), borderRadius: BorderRadius.circular(14)),
+                decoration: BoxDecoration(color: i == a ? brand : Colors.white, border: i == a ? null : Border.all(color: line), borderRadius: BorderRadius.circular(14)),
                 child: Text(it[i], style: TextStyle(color: i == a ? Colors.white : ink, fontWeight: i == a ? FontWeight.bold : FontWeight.normal)),
               ),
             ),
@@ -321,7 +356,7 @@ class Home extends StatelessWidget {
           [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(24)),
+              decoration: BoxDecoration(gradient: brandGrad, borderRadius: BorderRadius.circular(24)),
               child: DefaultTextStyle(
                 style: const TextStyle(color: Colors.white, fontSize: 13),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -396,7 +431,7 @@ class ContractDetail extends StatelessWidget {
         return Pg('عقد #${k.id}', back: true, [
           Box(Column(children: [
             Row(children: [
-              CircleAvatar(radius: 24, backgroundColor: const Color(0xFFE3F1EA), child: Text(ini(cu.name), style: bd.copyWith(color: okFg))),
+              CircleAvatar(radius: 24, backgroundColor: tint, child: Text(ini(cu.name), style: bd.copyWith(color: brand))),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(cu.name, style: bd), Text(k.item, style: mu), Text('تاريخ العقد: ${dstr(k.date)}', style: mu)])),
               Pill(sl[k.st], sk[k.st]),
@@ -404,7 +439,7 @@ class ContractDetail extends StatelessWidget {
             const SizedBox(height: 14),
             Row(children: [
               for (var i = 0; i < k.insts.length; i++)
-                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? green : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFDDE1DB)), borderRadius: BorderRadius.circular(4)))),
+                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? brand : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFDCE3F2)), borderRadius: BorderRadius.circular(4)))),
             ]),
             const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('سُدّد ${money(k.insts.where((i) => i.isPaid).fold(0.0, (s, i) => s + i.amt))}', style: mu), Text('المتبقي ${money(k.remaining)}', style: mu)]),
@@ -502,7 +537,7 @@ class _NcS extends State<NewContract> {
             decoration: InputDecoration(
               labelText: 'تاريخ العقد',
               filled: true,
-              fillColor: old ? Colors.white : const Color(0xFFECEEEA),
+              fillColor: old ? Colors.white : const Color(0xFFE7ECF7),
               suffixIcon: Icon(old ? Icons.calendar_today_outlined : Icons.lock_outline),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
               enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
@@ -578,7 +613,7 @@ class _CalcS extends State<Calc> {
       seg([for (final n in ns) '$n'], ni, (v) => setState(() => ni = v)),
       Container(
         padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(22)),
+        decoration: BoxDecoration(gradient: brandGrad, borderRadius: BorderRadius.circular(22)),
         child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('القسط الشهري'),
           Text(money(monthly), style: bd.copyWith(fontSize: 32, color: Colors.white)),
@@ -636,7 +671,7 @@ class CustomerProfile extends StatelessWidget {
         final ks = consOf(x), r = rate(x);
         return Pg('ملف العميل', back: true, [
           Row(children: [
-            CircleAvatar(radius: 30, backgroundColor: green, child: Text(ini(x.name), style: bd.copyWith(color: Colors.white, fontSize: 22))),
+            CircleAvatar(radius: 30, backgroundColor: brand, child: Text(ini(x.name), style: bd.copyWith(color: Colors.white, fontSize: 22))),
             const SizedBox(width: 14),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(x.name, style: bd.copyWith(fontSize: 18)), Text(x.phone, style: mu)]),
           ]),
@@ -678,7 +713,7 @@ class _RpS extends State<ReportsScr> {
           seg(['آخر 7 أيام', 'هذا الشهر', 'هذه السنة'], p, (v) => setState(() => p = v)),
           Container(
             padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(color: green, borderRadius: BorderRadius.circular(22)),
+            decoration: BoxDecoration(gradient: brandGrad, borderRadius: BorderRadius.circular(22)),
             child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 13), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('إجمالي التحصيل'),
               Text(money(coll), style: bd.copyWith(fontSize: 28, color: Colors.white)),
@@ -690,7 +725,7 @@ class _RpS extends State<ReportsScr> {
           Box(SizedBox(height: 150, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             for (var i = 0; i < 6; i++)
               Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? green : const Color(0xFFBFD9CD), borderRadius: BorderRadius.circular(6))),
+                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? brand : const Color(0xFFC3D3FA), borderRadius: BorderRadius.circular(6))),
                 const SizedBox(height: 6),
                 Text(months[bars[i].month - 1], style: const TextStyle(fontSize: 11, color: muted)),
               ])),
@@ -721,7 +756,7 @@ class Receipt extends StatelessWidget {
         ];
         return Pg('إيصال الدفعة', back: true, [
           Box(Column(children: [
-            const CircleAvatar(radius: 28, backgroundColor: Color(0xFFE3F1EA), child: Icon(Icons.check, color: okFg, size: 30)),
+            const CircleAvatar(radius: 28, backgroundColor: Color(0xFFD9F5E8), child: Icon(Icons.check, color: okFg, size: 30)),
             const SizedBox(height: 10),
             const Text('تم تسجيل الدفعة', style: mu),
             Text(money(tot), style: bd.copyWith(fontSize: 30)),
@@ -784,7 +819,7 @@ class _StS extends State<Settlement> {
             Box(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('مدّ المتبقي ${money(rem)} على ${months.round()} شهرًا', style: bd),
               Slider(value: months, min: 1, max: 24, divisions: 23, onChanged: (v) => setState(() => months = v)),
-              Text('القسط الجديد: ${money(rem / months.round())}', style: bd.copyWith(color: green, fontSize: 18)),
+              Text('القسط الجديد: ${money(rem / months.round())}', style: bd.copyWith(color: brand, fontSize: 18)),
               const SizedBox(height: 12),
               btn('تعديل الجدول', () { db.resched(k, months.round()); sb(c, 'تم تعديل الجدول'); }, outline: true),
             ])),
