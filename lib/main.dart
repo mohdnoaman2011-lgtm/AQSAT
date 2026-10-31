@@ -460,11 +460,11 @@ class ContractDetail extends StatelessWidget {
           ])),
           two(btn('تسجيل دفعة', nx == null ? null : () => payFlow(c, k)),
               btn('إرسال تذكير', nx == null ? null : () => openWa(cu.phone, 'السلام عليكم ${cu.name}، تذكير بقسط ${money(nx.amt)} من العقد #${k.id} المستحق في ${dstr(nx.due)}. شكرًا لكم.'), outline: true)),
-          btn('طباعة العقد PDF', () => printDoc('contract-${k.id}.pdf', 'عقد بيع بالأقساط رقم ${k.id}', [
+          two(btn('طباعة PDF', () => printDoc('contract-${k.id}.pdf', 'عقد بيع بالأقساط رقم ${k.id}', [
                 ['التاريخ', dstr(k.date)], ['العميل', cu.name], ['هاتف العميل', cu.phone], ['السلعة', k.item],
                 ['السعر الإجمالي', money(k.price)], ['الدفعة المقدمة', money(k.down)], ['نسبة الربح', '${nf(k.markup)}٪'],
                 ['عدد الأقساط', '${k.insts.length}'],
-              ], head: ['م', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true),
+              ], head: ['م', 'تاريخ الاستحقاق', 'المبلغ', 'الحالة'], table: [for (var i = 0; i < k.insts.length; i++) ['${i + 1}', dstr(k.insts[i].due), money(k.insts[i].amt), k.insts[i].isPaid ? 'مدفوع' : 'قادم']], sign: true), outline: true), btn('تعديل العقد', () => go(c, EditContract(k.id)), outline: true)),
           const SizedBox(height: 10),
           btn('سداد مبكر / جدولة', nx == null ? null : () => go(c, Settlement(k.id)), dark: true),
           const SizedBox(height: 16),
@@ -474,6 +474,64 @@ class ContractDetail extends StatelessWidget {
                 onTap: k.insts[n].isPaid ? () => go(c, Receipt(k.id, n)) : null),
         ]);
       });
+}
+
+// ───────── تعديل العقد ─────────
+class EditContract extends StatefulWidget {
+  final String id;
+  const EditContract(this.id, {super.key});
+  @override
+  State<EditContract> createState() => _EcS();
+}
+
+class _EcS extends State<EditContract> {
+  late final Contract k = db.con(widget.id)!;
+  late final Cust cu = db.cust(k.cid)!;
+  late final name = TextEditingController(text: cu.name), phone = TextEditingController(text: cu.phone), item = TextEditingController(text: k.item);
+  late final price = TextEditingController(text: k.price.round().toString()), down = TextEditingController(text: k.down.round().toString()), mk = TextEditingController(text: nf(k.markup));
+  late int n = k.insts.length;
+  bool get locked => k.paidCount > 0;
+  void rf(String _) => setState(() {});
+
+  @override
+  Widget build(BuildContext c) {
+    final ns = {6, 10, 12, 24, k.insts.length}.toList()..sort();
+    final p = pv(price.text).toDouble(), d = pv(down.text).toDouble(), m = pv(mk.text).toDouble();
+    final monthly = p > d ? (p - d) * (1 + m / 100) / n : 0.0;
+    return Pg('تعديل العقد #${k.id}', back: true, [
+      fld('اسم العميل', c: name),
+      fld('هاتف العميل', c: phone, num: true),
+      fld('السلعة', c: item),
+      if (locked)
+        const Box(Text('سُجّلت دفعات على هذا العقد، لذلك لا يمكن تعديل السعر أو عدد الأقساط. لتغيير الجدول استخدم «سداد مبكر / جدولة».', style: mu))
+      else ...[
+        Row(children: [Expanded(child: fld('السعر الإجمالي', c: price, num: true, f: rf)), const SizedBox(width: 10), Expanded(child: fld('الدفعة المقدمة', c: down, num: true, f: rf))]),
+        fld('نسبة الربح ٪ على المبلغ الممول', c: mk, num: true, f: rf),
+        const Text('عدد الأقساط', style: mu),
+        const SizedBox(height: 6),
+        seg([for (final x in ns) '$x'], ns.indexOf(n), (v) => setState(() => n = ns[v])),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: ink, borderRadius: BorderRadius.circular(20)),
+          child: DefaultTextStyle(style: const TextStyle(color: Colors.white, fontSize: 13), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('القسط الشهري بعد التعديل'),
+            Text(money(monthly), style: bd.copyWith(fontSize: 30, color: Colors.white)),
+            Text('يُعاد إنشاء الجدول من تاريخ العقد: ${dstr(k.date)}'),
+          ])),
+        ),
+        const SizedBox(height: 16),
+      ],
+      btn('حفظ التعديلات', () {
+        if (name.text.trim().isEmpty || phone.text.trim().isEmpty || item.text.trim().isEmpty) return sb(c, 'أكمل الاسم والهاتف والسلعة');
+        final ex = db.byName(name.text);
+        if (ex != null && ex.id != cu.id) return alert(c, 'هذا العميل موجود مسبقًا');
+        if (!locked && (p <= 0 || d < 0 || d >= p || m < 0)) return sb(c, 'تحقق من السعر والدفعة المقدمة');
+        db.editContract(k, name: name.text, phone: phone.text, item: item.text, price: locked ? null : p, down: d, markup: m, n: n);
+        Navigator.pop(c);
+        sb(c, 'تم حفظ التعديلات');
+      }),
+    ]);
+  }
 }
 
 // ───────── عقد جديد ─────────

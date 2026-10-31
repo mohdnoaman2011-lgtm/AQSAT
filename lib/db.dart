@@ -50,8 +50,9 @@ class Inst {
 }
 
 class Contract {
-  final String id, cid, item;
-  final double price, down, markup;
+  final String id, cid;
+  String item;
+  double price, down, markup;
   final DateTime date;
   final List<Inst> insts;
   Contract({required this.id, required this.cid, required this.item, required this.price, required this.down, required this.markup, required this.date, required this.insts});
@@ -157,6 +158,27 @@ class Db extends ChangeNotifier {
     i.left = k.remaining;
     _save();
     return i;
+  }
+
+  /// تعديل العقد. بيانات العميل والسلعة دائمًا قابلة للتعديل.
+  /// السعر والمقدمة والربح وعدد الأقساط تُعدَّل فقط قبل تسجيل أي دفعة (يُعاد إنشاء الجدول من تاريخ العقد).
+  void editContract(Contract k, {required String name, required String phone, required String item, double? price, double? down, double? markup, int? n}) {
+    final c = cust(k.cid);
+    if (c != null) {
+      c.name = name.trim();
+      c.phone = phone.trim();
+    }
+    k.item = item.trim();
+    if (price != null && down != null && markup != null && n != null && k.paidCount == 0) {
+      k.price = price;
+      k.down = down;
+      k.markup = markup;
+      final a = (price - down) * (1 + markup / 100) / n;
+      k.insts
+        ..clear()
+        ..addAll([for (var i = 1; i <= n; i++) Inst(addMonths(k.date, i), a)]);
+    }
+    _save();
   }
 
   /// سداد جزئي: يغطي الأقساط بالترتيب، وما يتبقى من المبلغ يُخصم من القسط التالي
