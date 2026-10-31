@@ -5,10 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'db.dart';
 import 'util.dart';
 
-// ألوان الشعار: أزرق ملكي → بنفسجي، مع أخضر النجاح
-const brand = Color(0xFF1D4ED8), brand2 = Color(0xFF7C3AED), ink = Color(0xFF0B1F4D), bg = Color(0xFFF5F8FF), tint = Color(0xFFE6ECFF);
-const brandGrad = LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [brand, brand2]);
-const muted = Color(0xFF475569), line = Color(0xFFD6DEEE), okFg = Color(0xFF047857);
+// ألوان الشعار: كحلي #112C4E وسماوي (أُغمق قليلًا ليقرأ النص الأبيض)، مع أخضر للنجاح
+const brand = Color(0xFF0E7490), brand2 = Color(0xFF112C4E), ink = Color(0xFF0A1C3A), bg = Color(0xFFF4F9FC), tint = Color(0xFFDDF6FB);
+const brandGrad = LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [brand2, brand]);
+const muted = Color(0xFF475569), line = Color(0xFFD3E3EA), okFg = Color(0xFF047857);
 const bd = TextStyle(fontWeight: FontWeight.bold);
 const mu = TextStyle(fontSize: 13, color: muted);
 const sl = ['نشط', 'متأخر', 'مكتمل'];
@@ -87,10 +87,10 @@ class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
     final logo = _iv(0, .35, Curves.easeOutBack), tag = _iv(.3, .55), bar = _iv(.05, 1, Curves.easeInOut);
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.white, Color(0xFFEAF2FF)])),
+        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0, .68, 1], colors: [Colors.white, Colors.white, Color(0xFFE6F9FD)])),
         child: Stack(children: [
-          Positioned(top: -90, right: -70, child: _blob(260, const Color(0x1F9333EA))),
-          Positioned(bottom: -110, left: -80, child: _blob(300, const Color(0x1F06B6D4))),
+          Positioned(top: -90, right: -70, child: _blob(260, const Color(0x1F22D3EE))),
+          Positioned(bottom: -110, left: -80, child: _blob(300, const Color(0x14112C4E))),
           SafeArea(
             child: Column(children: [
               const Spacer(flex: 5),
@@ -112,11 +112,11 @@ class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
                 padding: const EdgeInsets.symmetric(horizontal: 70),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
-                  child: AnimatedBuilder(animation: bar, builder: (_, __) => LinearProgressIndicator(value: bar.value, minHeight: 4, backgroundColor: const Color(0xFFD9E3F3), color: brand)),
+                  child: AnimatedBuilder(animation: bar, builder: (_, __) => LinearProgressIndicator(value: bar.value, minHeight: 4, backgroundColor: const Color(0xFFD3EAF1), color: brand)),
                 ),
               ),
               const SizedBox(height: 14),
-              const Text('الإصدار 1.3.0', style: TextStyle(fontSize: 12, color: muted)),
+              const Text('الإصدار 1.4.0', style: TextStyle(fontSize: 12, color: muted)),
               const SizedBox(height: 22),
             ]),
           ),
@@ -132,7 +132,7 @@ enum K { ok, late, neu }
 const _pc = {
   K.ok: [Color(0xFFD9F5E8), okFg],
   K.late: [Color(0xFFFDEBDD), Color(0xFF9A3412)],
-  K.neu: [Color(0xFFE7ECF7), Color(0xFF334155)],
+  K.neu: [Color(0xFFE6EEF3), Color(0xFF334155)],
 };
 
 Widget live(Widget Function() f) => ListenableBuilder(listenable: db, builder: (_, __) => f());
@@ -221,7 +221,7 @@ Widget two(Widget a, Widget b) => Padding(padding: const EdgeInsets.symmetric(ve
 
 Widget kv(String l, String v, {Color? c, bool first = false}) => Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFE8EDF7)))),
+      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFE3EDF2)))),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: const TextStyle(color: muted)), Text(v, style: bd.copyWith(color: c))]),
     );
 
@@ -439,7 +439,7 @@ class ContractDetail extends StatelessWidget {
             const SizedBox(height: 14),
             Row(children: [
               for (var i = 0; i < k.insts.length; i++)
-                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? brand : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFDCE3F2)), borderRadius: BorderRadius.circular(4)))),
+                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? brand : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFD9E6EC)), borderRadius: BorderRadius.circular(4)))),
             ]),
             const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('سُدّد ${money(k.insts.where((i) => i.isPaid).fold(0.0, (s, i) => s + i.amt))}', style: mu), Text('المتبقي ${money(k.remaining)}', style: mu)]),
@@ -537,7 +537,7 @@ class _NcS extends State<NewContract> {
             decoration: InputDecoration(
               labelText: 'تاريخ العقد',
               filled: true,
-              fillColor: old ? Colors.white : const Color(0xFFE7ECF7),
+              fillColor: old ? Colors.white : const Color(0xFFE6EEF3),
               suffixIcon: Icon(old ? Icons.calendar_today_outlined : Icons.lock_outline),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
               enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
@@ -725,7 +725,7 @@ class _RpS extends State<ReportsScr> {
           Box(SizedBox(height: 150, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             for (var i = 0; i < 6; i++)
               Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? brand : const Color(0xFFC3D3FA), borderRadius: BorderRadius.circular(6))),
+                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? brand : const Color(0xFFBFEFF8), borderRadius: BorderRadius.circular(6))),
                 const SizedBox(height: 6),
                 Text(months[bars[i].month - 1], style: const TextStyle(fontSize: 11, color: muted)),
               ])),

@@ -38,7 +38,7 @@ Future<void> printDoc(String name, String title, List<List<String>> rows,
     {List<String>? head, List<List<String>>? table, bool sign = false, List<String>? big}) async {
   final doc = pw.Document(
       theme: pw.ThemeData.withFont(base: await PdfGoogleFonts.cairoRegular(), bold: await PdfGoogleFonts.cairoBold()));
-  const grey = PdfColor.fromInt(0xFFF1F4FB), bord = PdfColor.fromInt(0xFFCBD5E8), green = PdfColor.fromInt(0xFF1D4ED8);
+  const grey = PdfColor.fromInt(0xFFF1F6F9), bord = PdfColor.fromInt(0xFFCBD9E0), green = PdfColor.fromInt(0xFF112C4E);
   pw.Widget cell(String t, {bool bold = false, PdfColor? bg}) => pw.Container(
       color: bg,
       padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
