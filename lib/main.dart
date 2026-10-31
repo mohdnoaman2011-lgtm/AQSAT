@@ -316,6 +316,15 @@ Widget instItem(BuildContext c, Contract k, Inst i) {
       onTap: () => go(c, ContractDetail(k.id)));
 }
 
+Widget groupItem(BuildContext c, List<(Contract, Inst)> g) {
+  final (k, i) = g.first;
+  if (g.length == 1) return instItem(c, k, i);
+  final cu = db.cust(k.cid), late = i.lateDays;
+  return Item(ini(cu?.name ?? ''), cu?.name ?? '', '${g.length == 2 ? 'عقدان' : '${g.length} عقود'} · الأقرب: ${k.item}', money(i.amt),
+      late > 0 ? 'متأخر $late يوم' : (i.due == today() ? 'اليوم' : dstr(i.due)), late > 0 ? K.late : K.neu,
+      onTap: () => go(c, CustomerProfile(k.cid)));
+}
+
 // ───────── الهيكل ─────────
 class Shell extends StatefulWidget {
   const Shell({super.key});
@@ -351,6 +360,11 @@ class Home extends StatelessWidget {
         final un = all.where((e) => !e.$2.isPaid).toList()..sort((a, b) => a.$2.due.compareTo(b.$2.due));
         // قسط واحد فقط لكل عقد (القسط التالي)، حتى لا يتكرر اسم العميل
         final nxt = [for (final k in db.cons) if (k.next != null) (k, k.next!)]..sort((a, b) => a.$2.due.compareTo(b.$2.due));
+        // صف واحد لكل عميل: أقرب قسط من بين عقوده
+        final byC = <String, List<(Contract, Inst)>>{};
+        for (final e in nxt) {
+          (byC[e.$1.cid] ??= []).add(e);
+        }
         return Pg(
           'لوحة التحصيل',
           [
@@ -378,7 +392,7 @@ class Home extends StatelessWidget {
             const SizedBox(height: 16),
             hd('الأقساط القادمة'),
             if (un.isEmpty) empty('لا توجد أقساط مستحقة.\nأضف عقدًا جديدًا من الزر بالأسفل.'),
-            for (final (k, i) in nxt.take(5)) instItem(c, k, i),
+            for (final g in byC.values.take(5)) groupItem(c, g),
           ],
           acts: [IconButton(tooltip: 'حاسبة الأقساط', onPressed: () => go(c, const Calc()), icon: const Icon(Icons.calculate_outlined))],
           fab: FloatingActionButton.extended(backgroundColor: ink, foregroundColor: Colors.white, onPressed: () => go(c, const NewContract()), icon: const Icon(Icons.add), label: const Text('عقد جديد')),
