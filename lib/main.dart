@@ -524,7 +524,10 @@ class _EcS extends State<EditContract> {
       btn('حفظ التعديلات', () {
         if (name.text.trim().isEmpty || phone.text.trim().isEmpty || item.text.trim().isEmpty) return sb(c, 'أكمل الاسم والهاتف والسلعة');
         final ex = db.byName(name.text);
-        if (ex != null && ex.id != cu.id) return alert(c, 'هذا العميل موجود مسبقًا');
+        if (ex != null && ex.id != cu.id) {
+          alert(c, 'هذا العميل موجود مسبقًا');
+          return;
+        }
         if (!locked && (p <= 0 || d < 0 || d >= p || m < 0)) return sb(c, 'تحقق من السعر والدفعة المقدمة');
         db.editContract(k, name: name.text, phone: phone.text, item: item.text, price: locked ? null : p, down: d, markup: m, n: n);
         Navigator.pop(c);
