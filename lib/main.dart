@@ -567,6 +567,21 @@ class _PvS extends State<PinVerify> {
 
 Future<bool> verifyPin(BuildContext c) async => await Navigator.push<bool>(c, MaterialPageRoute(builder: (_) => const PinVerify())) ?? false;
 
+Future<void> restoreOptions(BuildContext c) async {
+  final a = await showModalBottomSheet<String>(
+      context: c,
+      builder: (d) => SafeArea(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(leading: const Icon(Icons.history), title: const Text('من نسخة تلقائية'), subtitle: const Text('آخر 4 نسخ داخل التطبيق', style: mu), onTap: () => Navigator.pop(d, 'auto')),
+            ListTile(leading: const Icon(Icons.folder_open_outlined), title: const Text('من ملف في الجهاز'), onTap: () => Navigator.pop(d, 'file')),
+          ])));
+  if (a == null || !c.mounted) return;
+  if (a == 'auto') return restoreAutoSheet(c);
+  if (!await sure(c, 'ستُستبدل البيانات الحالية بالنسخة المختارة. متابعة؟')) return;
+  final m = await restoreFile();
+  if (c.mounted) sb(c, m);
+}
+
 Future<void> lockOptions(BuildContext c) async {
   final a = await showModalBottomSheet<String>(
       context: c,
@@ -1218,35 +1233,20 @@ class SettingsScr extends StatelessWidget {
             if (v != null && v.trim().isNotEmpty) db.setv('cc', v.trim());
           }),
         ]),
-        sec('النسخ التلقائي', [
+        sec('النسخ الاحتياطي', [
           SwitchListTile(
               title: const Text('نسخة تلقائية أسبوعية'),
               subtitle: Text(db.lastAuto == null ? 'لم تؤخذ نسخة بعد' : 'آخر نسخة: ${dstr(db.lastAuto!)}', style: mu),
               value: db.autoBackup,
-              activeColor: brand,
+              activeTrackColor: brand,
+              thumbColor: WidgetStateProperty.all(Colors.white),
               onChanged: (v) => db.setv('autoBackup', v ? 1 : 0)),
-          row('أخذ نسخة الآن', '', () async {
-            if (db.custs.isEmpty && db.cons.isEmpty) return alert(c, 'لا توجد بيانات للنسخ الاحتياطي');
-            final ok = await runAutoBackup();
-            if (c.mounted) sb(c, ok ? 'تم حفظ نسخة داخل التطبيق' : 'تعذّر حفظ النسخة');
-          }),
-          row('تصدير آخر نسخة إلى الجهاز', '', () async {
-            final m = await exportLastAuto();
-            if (c.mounted) sb(c, m);
-          }),
-          row('استعادة من نسخة تلقائية', '', () => restoreAutoSheet(c)),
-        ]),
-        sec('البيانات', [
-          row('نسخ احتياطي إلى الجهاز', '', () async {
+          row('حفظ نسخة في الجهاز', '', () async {
             if (db.custs.isEmpty && db.cons.isEmpty) return alert(c, 'لا توجد بيانات للنسخ الاحتياطي');
             final m = await backupFile();
             if (c.mounted) sb(c, m);
           }),
-          row('استعادة من ملف في الجهاز', '', () async {
-            if (!await sure(c, 'ستُستبدل البيانات الحالية بالنسخة المختارة. متابعة؟')) return;
-            final m = await restoreFile();
-            if (c.mounted) sb(c, m);
-          }),
+          row('استعادة نسخة', '', () => restoreOptions(c)),
           row('حذف كل البيانات', '', () async {
             if (await sure(c, 'حذف كل العملاء والعقود نهائيًا؟')) db.reset();
           }),
