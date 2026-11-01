@@ -23,7 +23,7 @@ class AppLock extends ChangeNotifier {
     _fails = _p!.getInt('pin_fails') ?? 0;
     final u = _p!.getInt('pin_until');
     _until = u == null ? null : DateTime.fromMillisecondsSinceEpoch(u);
-    locked = enabled; // يُقفل عند كل تشغيل
+    locked = false; // يُقفل بعد شاشة البداية (انظر Splash في main.dart)
   }
 
   String _h(String pin, String salt) => sha256.convert(utf8.encode('$salt:$pin')).toString();

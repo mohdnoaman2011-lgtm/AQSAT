@@ -30,6 +30,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await db.load();
   await appLock.load();
+  autoBackupIfDue();
   runApp(const App());
 }
 
@@ -67,6 +68,7 @@ class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
     super.initState();
     a.forward().whenComplete(() {
       if (!mounted) return;
+      appLock.lockNow(); // شاشة الرمز تظهر بعد شاشة البداية
       Navigator.pushReplacement(
           context,
           PageRouteBuilder(
@@ -354,7 +356,10 @@ class _LockHostS extends State<LockHost> with WidgetsBindingObserver {
   // يُقفل التطبيق إن غاب في الخلفية 60 ثانية أو أكثر (حتى لا يُقفل عند الطباعة أو فتح واتساب)
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.paused) _away = DateTime.now();
+    if (s == AppLifecycleState.paused) {
+      _away = DateTime.now();
+      autoBackupIfDue();
+    }
     if (s == AppLifecycleState.resumed && _away != null) {
       if (DateTime.now().difference(_away!).inSeconds >= 60) appLock.lockNow();
       _away = null;
@@ -578,6 +583,23 @@ Future<void> lockOptions(BuildContext c) async {
     await appLock.clear();
     if (c.mounted) sb(c, 'تم إيقاف قفل التطبيق');
   }
+}
+
+Future<void> restoreAutoSheet(BuildContext c) async {
+  final fs = await listAutoBackups();
+  if (!c.mounted) return;
+  if (fs.isEmpty) return alert(c, 'لا توجد نسخ تلقائية بعد');
+  final f = await showModalBottomSheet<AutoBackup>(
+      context: c,
+      builder: (d) => SafeArea(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Padding(padding: EdgeInsets.all(16), child: Text('اختر النسخة المراد استعادتها', style: bd)),
+            for (final x in fs) ListTile(leading: const Icon(Icons.history), title: Text(x.label), onTap: () => Navigator.pop(d, x)),
+          ])));
+  if (f == null || !c.mounted) return;
+  if (!await sure(c, 'ستُستبدل البيانات الحالية بنسخة ${f.label}. متابعة؟')) return;
+  final m = await restoreAutoFile(f.path);
+  if (c.mounted) sb(c, m);
 }
 
 // ───────── الهيكل ─────────
@@ -1195,6 +1217,24 @@ class SettingsScr extends StatelessWidget {
             final v = await ask(c, 'رمز الدولة (مثال: 249)', init: db.gs('cc'), num: true);
             if (v != null && v.trim().isNotEmpty) db.setv('cc', v.trim());
           }),
+        ]),
+        sec('النسخ التلقائي', [
+          SwitchListTile(
+              title: const Text('نسخة تلقائية أسبوعية'),
+              subtitle: Text(db.lastAuto == null ? 'لم تؤخذ نسخة بعد' : 'آخر نسخة: ${dstr(db.lastAuto!)}', style: mu),
+              value: db.autoBackup,
+              activeColor: brand,
+              onChanged: (v) => db.setv('autoBackup', v ? 1 : 0)),
+          row('أخذ نسخة الآن', '', () async {
+            if (db.custs.isEmpty && db.cons.isEmpty) return alert(c, 'لا توجد بيانات للنسخ الاحتياطي');
+            final ok = await runAutoBackup();
+            if (c.mounted) sb(c, ok ? 'تم حفظ نسخة داخل التطبيق' : 'تعذّر حفظ النسخة');
+          }),
+          row('تصدير آخر نسخة إلى الجهاز', '', () async {
+            final m = await exportLastAuto();
+            if (c.mounted) sb(c, m);
+          }),
+          row('استعادة من نسخة تلقائية', '', () => restoreAutoSheet(c)),
         ]),
         sec('البيانات', [
           row('نسخ احتياطي إلى الجهاز', '', () async {

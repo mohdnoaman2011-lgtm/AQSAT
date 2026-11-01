@@ -75,6 +75,12 @@ class Db extends ChangeNotifier {
   int gi(String k) => (cfg[k] as num).toInt();
   double gn(String k) => (cfg[k] as num).toDouble();
   String gs(String k) => cfg[k].toString();
+  bool get autoBackup => cfg['autoBackup'] != 0;
+  DateTime? get lastAuto {
+    final v = cfg['lastAuto'];
+    return v is num ? DateTime.fromMillisecondsSinceEpoch(v.toInt()) : null;
+  }
+
   Cust? cust(String id) => custs.where((c) => c.id == id).firstOrNull;
   /// توحيد الاسم للمقارنة: يتجاهل التشكيل والتطويل، وأشكال الألف (أ إ آ ا)،
   /// و«ة/ه»، و«ى/ي»، والمسافات المتعددة.

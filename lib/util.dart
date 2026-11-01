@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -113,5 +115,72 @@ Future<String> restoreFile() async {
     return 'تمت استعادة البيانات';
   } catch (_) {
     return 'الملف ليس نسخة احتياطية صالحة';
+  }
+}
+
+// ───────── النسخ الاحتياطي التلقائي الأسبوعي ─────────
+// تُحفظ النسخ داخل مجلد التطبيق (آخر 4 نسخ). تُؤخذ نسخة عند فتح التطبيق أو تركه
+// إذا مضى 7 أيام أو أكثر على آخر نسخة. لحمايتها من فقدان الجوال صدّر نسخة إلى الجهاز.
+class AutoBackup {
+  final String path, label;
+  AutoBackup(this.path, this.label);
+}
+
+Future<Directory> _bdir() async {
+  final d = Directory('${(await getApplicationDocumentsDirectory()).path}/backups');
+  if (!await d.exists()) await d.create(recursive: true);
+  return d;
+}
+
+String _alabel(String p) {
+  final m = RegExp(r'auto-(\d{4})(\d{2})(\d{2})').firstMatch(p)!;
+  return dstr(DateTime(int.parse(m[1]!), int.parse(m[2]!), int.parse(m[3]!)));
+}
+
+Future<List<AutoBackup>> listAutoBackups() async {
+  final d = await _bdir();
+  final fs = <File>[
+    for (final e in await d.list().toList())
+      if (e is File && RegExp(r'auto-\d{8}\.json$').hasMatch(e.path)) e
+  ]..sort((a, b) => b.path.compareTo(a.path));
+  return [for (final f in fs) AutoBackup(f.path, _alabel(f.path))];
+}
+
+/// يحفظ نسخة الآن ويُبقي آخر 4 نسخ فقط. يرجع true عند النجاح.
+Future<bool> runAutoBackup() async {
+  try {
+    final d = await _bdir(), n = today();
+    final name = 'auto-${n.year}${n.month.toString().padLeft(2, '0')}${n.day.toString().padLeft(2, '0')}.json';
+    await File('${d.path}/$name').writeAsString(db.export());
+    db.setv('lastAuto', DateTime.now().millisecondsSinceEpoch);
+    for (final b in (await listAutoBackups()).skip(4)) {
+      await File(b.path).delete();
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> autoBackupIfDue() async {
+  if (!db.autoBackup || (db.custs.isEmpty && db.cons.isEmpty)) return;
+  final l = db.lastAuto;
+  if (l != null && DateTime.now().difference(l).inDays < 7) return;
+  await runAutoBackup();
+}
+
+Future<String> exportLastAuto() async {
+  final l = await listAutoBackups();
+  if (l.isEmpty) return 'لا توجد نسخ تلقائية بعد';
+  final p = await FilePicker.saveFile(dialogTitle: 'تصدير النسخة', fileName: l.first.path.split('/').last, bytes: await File(l.first.path).readAsBytes());
+  return p == null ? 'لم يتم الحفظ' : 'تم تصدير النسخة إلى الجهاز';
+}
+
+Future<String> restoreAutoFile(String path) async {
+  try {
+    db.restore(await File(path).readAsString());
+    return 'تمت استعادة البيانات';
+  } catch (_) {
+    return 'تعذّرت الاستعادة';
   }
 }
