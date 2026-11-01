@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'db.dart';
+import 'lock.dart';
 import 'util.dart';
 
 // ألوان الشعار: كحلي #112C4E وسماوي (أُغمق قليلًا ليقرأ النص الأبيض)، مع أخضر للنجاح
@@ -27,6 +29,7 @@ void sb(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackB
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await db.load();
+  await appLock.load();
   runApp(const App());
 }
 
@@ -37,6 +40,7 @@ class App extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: 'أقساط',
         locale: const Locale('ar'),
+        builder: (c, child) => LockHost(child: child!),
         supportedLocales: const [Locale('ar')],
         localizationsDelegates: const [GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate],
         theme: ThemeData(
@@ -323,6 +327,257 @@ Widget groupItem(BuildContext c, List<(Contract, Inst)> g) {
   return Item(ini(cu?.name ?? ''), cu?.name ?? '', '${g.length == 2 ? 'عقدان' : '${g.length} عقود'} · الأقرب: ${k.item}', money(i.amt),
       late > 0 ? 'متأخر $late يوم' : (i.due == today() ? 'اليوم' : dstr(i.due)), late > 0 ? K.late : K.neu,
       onTap: () => go(c, CustomerProfile(k.cid)));
+}
+
+// ───────── قفل التطبيق ─────────
+class LockHost extends StatefulWidget {
+  final Widget child;
+  const LockHost({required this.child, super.key});
+  @override
+  State<LockHost> createState() => _LockHostS();
+}
+
+class _LockHostS extends State<LockHost> with WidgetsBindingObserver {
+  DateTime? _away;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // يُقفل التطبيق إن غاب في الخلفية 60 ثانية أو أكثر (حتى لا يُقفل عند الطباعة أو فتح واتساب)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s == AppLifecycleState.paused) _away = DateTime.now();
+    if (s == AppLifecycleState.resumed && _away != null) {
+      if (DateTime.now().difference(_away!).inSeconds >= 60) appLock.lockNow();
+      _away = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) => ListenableBuilder(
+      listenable: appLock,
+      builder: (_, __) => Stack(children: [widget.child, if (appLock.locked) const Positioned.fill(child: LockScreen())]));
+}
+
+class PinPad extends StatefulWidget {
+  final String title;
+  final String? msg;
+  final bool enabled;
+  final ValueChanged<String> onDone;
+  const PinPad({required this.title, required this.onDone, this.msg, this.enabled = true, super.key});
+  @override
+  State<PinPad> createState() => _PinPadS();
+}
+
+class _PinPadS extends State<PinPad> {
+  String pin = '';
+  void tap(String d) {
+    if (!widget.enabled || pin.length >= 4) return;
+    setState(() => pin += d);
+    if (pin.length == 4) {
+      final p = pin;
+      Future.microtask(() => widget.onDone(p));
+    }
+  }
+
+  void del() {
+    if (pin.isNotEmpty) setState(() => pin = pin.substring(0, pin.length - 1));
+  }
+
+  Widget key(Widget child, VoidCallback? f) => Expanded(
+      child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: SizedBox(
+              height: 66,
+              child: f == null
+                  ? const SizedBox()
+                  : Material(
+                      color: Colors.white,
+                      shape: const CircleBorder(side: BorderSide(color: line)),
+                      child: InkWell(customBorder: const CircleBorder(), onTap: widget.enabled ? f : null, child: Center(child: child))))));
+
+  @override
+  Widget build(BuildContext c) {
+    Widget d(String n) => key(Text(n, style: bd.copyWith(fontSize: 24)), () => tap(n));
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(widget.title, style: bd.copyWith(fontSize: 20)),
+      const SizedBox(height: 8),
+      SizedBox(height: 22, child: Text(widget.msg ?? '', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: Color(0xFF9A3412)))),
+      const SizedBox(height: 10),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        for (var i = 0; i < 4; i++)
+          Container(
+              width: 16,
+              height: 16,
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: i < pin.length ? brand : Colors.transparent, border: Border.all(color: brand, width: 2))),
+      ]),
+      const SizedBox(height: 22),
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: SizedBox(
+          width: 300,
+          child: Column(children: [
+            Row(children: [d('1'), d('2'), d('3')]),
+            Row(children: [d('4'), d('5'), d('6')]),
+            Row(children: [d('7'), d('8'), d('9')]),
+            Row(children: [key(const SizedBox(), null), d('0'), key(const Icon(Icons.backspace_outlined), del)]),
+          ]),
+        ),
+      ),
+    ]);
+  }
+}
+
+class LockScreen extends StatefulWidget {
+  const LockScreen({super.key});
+  @override
+  State<LockScreen> createState() => _LockS();
+}
+
+class _LockS extends State<LockScreen> {
+  int round = 0;
+  String? err;
+  bool forgot = false, wasWaiting = false;
+  Timer? t;
+  @override
+  void initState() {
+    super.initState();
+    t = Timer.periodic(const Duration(seconds: 1), (_) {
+      final w = appLock.wait > 0;
+      if (mounted && (w || wasWaiting)) setState(() {});
+      wasWaiting = w;
+    });
+  }
+
+  @override
+  void dispose() {
+    t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    final w = appLock.wait;
+    return Material(
+      color: Colors.white,
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.asset('assets/logo.png', width: 140),
+              const SizedBox(height: 16),
+              PinPad(
+                key: ValueKey(round),
+                title: 'أدخل رمز القفل',
+                enabled: w == 0,
+                msg: w > 0 ? 'محاولات كثيرة، حاول بعد $w ثانية' : err,
+                onDone: (p) {
+                  if (!appLock.tryUnlock(p)) setState(() { err = 'الرمز غير صحيح'; round++; });
+                },
+              ),
+              TextButton(onPressed: () => setState(() => forgot = !forgot), child: const Text('نسيت الرمز؟')),
+              if (forgot) const Text('لا يمكن استرجاع الرمز. الحل الوحيد هو مسح بيانات التطبيق من إعدادات الجوال، وهذا يحذف كل العقود. لذلك احتفظ بنسخة احتياطية.', textAlign: TextAlign.center, style: mu),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PinSetup extends StatefulWidget {
+  const PinSetup({super.key});
+  @override
+  State<PinSetup> createState() => _PsS();
+}
+
+class _PsS extends State<PinSetup> {
+  String? first, err;
+  int round = 0;
+  @override
+  Widget build(BuildContext c) => Pg('قفل التطبيق', back: true, [
+        const SizedBox(height: 10),
+        Center(
+          child: PinPad(
+            key: ValueKey(round),
+            title: first == null ? 'اختر رمزًا من 4 أرقام' : 'أعد إدخال الرمز للتأكيد',
+            msg: err,
+            onDone: (p) async {
+              if (first == null) {
+                setState(() { first = p; err = null; round++; });
+              } else if (first == p) {
+                await appLock.setPin(p);
+                if (!c.mounted) return;
+                sb(c, 'تم تفعيل قفل التطبيق');
+                Navigator.pop(c);
+              } else {
+                setState(() { first = null; err = 'الرمزان غير متطابقين، ابدأ من جديد'; round++; });
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 20),
+        const Box(Text('تنبيه: إن نسيت الرمز لا يمكن استرجاعه إلا بمسح بيانات التطبيق، وهذا يحذف كل العقود. احتفظ بنسخة احتياطية من الإعدادات > البيانات.', style: mu)),
+      ]);
+}
+
+class PinVerify extends StatefulWidget {
+  const PinVerify({super.key});
+  @override
+  State<PinVerify> createState() => _PvS();
+}
+
+class _PvS extends State<PinVerify> {
+  String? err;
+  int round = 0;
+  @override
+  Widget build(BuildContext c) => Pg('تأكيد الرمز', back: true, [
+        const SizedBox(height: 10),
+        Center(
+          child: PinPad(
+            key: ValueKey(round),
+            title: 'أدخل الرمز الحالي',
+            msg: err,
+            onDone: (p) {
+              if (appLock.check(p)) {
+                Navigator.pop(c, true);
+              } else {
+                setState(() { err = 'الرمز غير صحيح'; round++; });
+              }
+            },
+          ),
+        ),
+      ]);
+}
+
+Future<bool> verifyPin(BuildContext c) async => await Navigator.push<bool>(c, MaterialPageRoute(builder: (_) => const PinVerify())) ?? false;
+
+Future<void> lockOptions(BuildContext c) async {
+  final a = await showModalBottomSheet<String>(
+      context: c,
+      builder: (d) => SafeArea(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(leading: const Icon(Icons.pin_outlined), title: const Text('تغيير الرمز'), onTap: () => Navigator.pop(d, 'change')),
+            ListTile(leading: const Icon(Icons.lock_open_outlined), title: const Text('إيقاف القفل'), onTap: () => Navigator.pop(d, 'off')),
+          ])));
+  if (a == null || !c.mounted) return;
+  if (!await verifyPin(c) || !c.mounted) return;
+  if (a == 'change') {
+    go(c, const PinSetup());
+  } else {
+    await appLock.clear();
+    if (c.mounted) sb(c, 'تم إيقاف قفل التطبيق');
+  }
 }
 
 // ───────── الهيكل ─────────
@@ -916,11 +1171,20 @@ class SettingsScr extends StatelessWidget {
         if (v != null && v.trim().isNotEmpty) db.setv(k, pv(v));
       });
   @override
-  Widget build(BuildContext c) => live(() => Pg('الإعدادات', [
+  Widget build(BuildContext c) => ListenableBuilder(listenable: appLock, builder: (_, __) => live(() => Pg('الإعدادات', [
         sec('المنشأة', [
           row('اسم المنشأة (يظهر في المستندات)', db.gs('company'), () async {
             final v = await ask(c, 'اسم المنشأة', init: db.gs('company'));
             if (v != null && v.trim().isNotEmpty) db.setv('company', v.trim());
+          }),
+        ]),
+        sec('الأمان', [
+          row('قفل التطبيق بالرمز', appLock.enabled ? 'مفعّل' : 'غير مفعّل', () {
+            if (appLock.enabled) {
+              lockOptions(c);
+            } else {
+              go(c, const PinSetup());
+            }
           }),
         ]),
         sec('التحصيل', [
@@ -947,5 +1211,5 @@ class SettingsScr extends StatelessWidget {
             if (await sure(c, 'حذف كل العملاء والعقود نهائيًا؟')) db.reset();
           }),
         ]),
-      ]));
+      ])));
 }
