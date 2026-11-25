@@ -7,10 +7,10 @@ import 'db.dart';
 import 'lock.dart';
 import 'util.dart';
 
-// ألوان الشعار: كحلي #112C4E وسماوي (أُغمق قليلًا ليقرأ النص الأبيض)، مع أخضر للنجاح
-const brand = Color(0xFF0E7490), brand2 = Color(0xFF112C4E), ink = Color(0xFF0A1C3A), bg = Color(0xFFF4F9FC), tint = Color(0xFFDDF6FB);
+// ألوان الشعار: كحلي #0B2349 وأزرق (أُغمق قليلًا ليقرأ النص الأبيض) وذهبي #E8A92E للتمييز، مع أخضر للنجاح
+const brand = Color(0xFF1D5FB8), brand2 = Color(0xFF0B2349), ink = Color(0xFF081A38), bg = Color(0xFFF4F8FD), tint = Color(0xFFE3EEFC), gold = Color(0xFFE8A92E);
 const brandGrad = LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [brand2, brand]);
-const muted = Color(0xFF475569), line = Color(0xFFD3E3EA), okFg = Color(0xFF047857);
+const muted = Color(0xFF475569), line = Color(0xFFD5E1F0), okFg = Color(0xFF047857);
 const bd = TextStyle(fontWeight: FontWeight.bold);
 const mu = TextStyle(fontSize: 13, color: muted);
 const sl = ['نشط', 'متأخر', 'مكتمل'];
@@ -93,14 +93,14 @@ class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
     final logo = _iv(0, .35, Curves.easeOutBack), tag = _iv(.3, .55), bar = _iv(.05, 1, Curves.easeInOut);
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0, .68, 1], colors: [Colors.white, Colors.white, Color(0xFFE6F9FD)])),
+        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0, .68, 1], colors: [Colors.white, Colors.white, Color(0xFFEAF3FD)])),
         child: Stack(children: [
-          Positioned(top: -90, right: -70, child: _blob(260, const Color(0x1F22D3EE))),
-          Positioned(bottom: -110, left: -80, child: _blob(300, const Color(0x14112C4E))),
+          Positioned(top: -90, right: -70, child: _blob(260, const Color(0x1F2E86DE))),
+          Positioned(bottom: -110, left: -80, child: _blob(300, const Color(0x1AE8A92E))),
           SafeArea(
             child: Column(children: [
               const Spacer(flex: 5),
-              FadeTransition(opacity: _iv(0, .3), child: ScaleTransition(scale: Tween<double>(begin: .85, end: 1).animate(logo), child: Image.asset('assets/logo.png', width: 270))),
+              FadeTransition(opacity: _iv(0, .3), child: ScaleTransition(scale: Tween<double>(begin: .85, end: 1).animate(logo), child: Image.asset('assets/logo.png', width: 250))),
               const SizedBox(height: 10),
               FadeTransition(
                 opacity: tag,
@@ -118,7 +118,7 @@ class _SplashS extends State<Splash> with SingleTickerProviderStateMixin {
                 padding: const EdgeInsets.symmetric(horizontal: 70),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
-                  child: AnimatedBuilder(animation: bar, builder: (_, __) => LinearProgressIndicator(value: bar.value, minHeight: 4, backgroundColor: const Color(0xFFD3EAF1), color: brand)),
+                  child: AnimatedBuilder(animation: bar, builder: (_, __) => LinearProgressIndicator(value: bar.value, minHeight: 4, backgroundColor: const Color(0xFFD6E4F5), color: brand)),
                 ),
               ),
               const SizedBox(height: 14),
@@ -138,7 +138,7 @@ enum K { ok, late, neu }
 const _pc = {
   K.ok: [Color(0xFFD9F5E8), okFg],
   K.late: [Color(0xFFFDEBDD), Color(0xFF9A3412)],
-  K.neu: [Color(0xFFE6EEF3), Color(0xFF334155)],
+  K.neu: [Color(0xFFE6EDF7), Color(0xFF334155)],
 };
 
 Widget live(Widget Function() f) => ListenableBuilder(listenable: db, builder: (_, __) => f());
@@ -227,7 +227,7 @@ Widget two(Widget a, Widget b) => Padding(padding: const EdgeInsets.symmetric(ve
 
 Widget kv(String l, String v, {Color? c, bool first = false}) => Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFE3EDF2)))),
+      decoration: BoxDecoration(border: first ? null : const Border(top: BorderSide(color: Color(0xFFE5ECF6)))),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: const TextStyle(color: muted)), Text(v, style: bd.copyWith(color: c))]),
     );
 
@@ -669,7 +669,7 @@ class Home extends StatelessWidget {
                   const Text('المستحق هذا الشهر', style: TextStyle(fontSize: 14)),
                   Text(money(tot), style: bd.copyWith(fontSize: 30, color: Colors.white)),
                   const SizedBox(height: 12),
-                  ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: pct, minHeight: 8, backgroundColor: Colors.white24, color: Colors.white)),
+                  ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: pct, minHeight: 8, backgroundColor: Colors.white24, color: gold)),
                   const SizedBox(height: 8),
                   Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('تم تحصيل ${(pct * 100).round()}٪'), Text('متبقٍ ${money(tot - got)}')]),
                 ]),
@@ -745,7 +745,7 @@ class ContractDetail extends StatelessWidget {
             const SizedBox(height: 14),
             Row(children: [
               for (var i = 0; i < k.insts.length; i++)
-                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? brand : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFD9E6EC)), borderRadius: BorderRadius.circular(4)))),
+                Expanded(child: Container(height: 8, margin: const EdgeInsets.symmetric(horizontal: 1.5), decoration: BoxDecoration(color: k.insts[i].isPaid ? brand : (k.insts[i].lateDays > 0 ? const Color(0xFFE58A4B) : const Color(0xFFDCE6F3)), borderRadius: BorderRadius.circular(4)))),
             ]),
             const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('سُدّد ${money(k.insts.where((i) => i.isPaid).fold(0.0, (s, i) => s + i.amt))}', style: mu), Text('المتبقي ${money(k.remaining)}', style: mu)]),
@@ -904,7 +904,7 @@ class _NcS extends State<NewContract> {
             decoration: InputDecoration(
               labelText: 'تاريخ العقد',
               filled: true,
-              fillColor: old ? Colors.white : const Color(0xFFE6EEF3),
+              fillColor: old ? Colors.white : const Color(0xFFE6EDF7),
               suffixIcon: Icon(old ? Icons.calendar_today_outlined : Icons.lock_outline),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
               enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: line)),
@@ -1092,7 +1092,7 @@ class _RpS extends State<ReportsScr> {
           Box(SizedBox(height: 150, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             for (var i = 0; i < 6; i++)
               Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? brand : const Color(0xFFBFEFF8), borderRadius: BorderRadius.circular(6))),
+                Container(height: mx == 0 ? 6 : 6 + 100 * vals[i] / mx, margin: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(color: i == 5 ? brand : const Color(0xFFBBD6F7), borderRadius: BorderRadius.circular(6))),
                 const SizedBox(height: 6),
                 Text(months[bars[i].month - 1], style: const TextStyle(fontSize: 11, color: muted)),
               ])),
